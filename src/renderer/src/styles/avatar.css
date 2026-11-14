@@ -1,0 +1,276 @@
+/* Avatar art. Motion is CSS only, keyed by data-state (and data-family for working) on the svg. Max cycle 4s. */
+
+.avatar-svg {
+  overflow: visible;
+}
+
+.avatar-svg .avatar-body {
+  fill: var(--avatar-color);
+  transform-box: fill-box;
+  transform-origin: center;
+}
+
+/* Small avatars enlarge only the eyes and mouth, so the face stays legible. The outer group carries the scale; keyframes stay on .avatar-eyes and .avatar-mouth. */
+.bot-avatar-art {
+  container-type: inline-size;
+}
+
+.avatar-svg .avatar-face {
+  transform-box: fill-box;
+  transform-origin: center;
+}
+
+@container (max-width: 24px) {
+  .avatar-svg .avatar-face {
+    transform: scale(1.9);
+  }
+}
+
+@container (min-width: 25px) and (max-width: 44px) {
+  .avatar-svg .avatar-face {
+    transform: scale(1.5);
+  }
+}
+
+.avatar-svg .avatar-eyes {
+  transform-box: fill-box;
+  transform-origin: center;
+}
+
+.avatar-svg .avatar-eye {
+  transform-box: fill-box;
+  transform-origin: center;
+}
+
+.avatar-svg .avatar-eye-own {
+  fill: var(--avatar-color);
+}
+
+.avatar-svg .avatar-mouth {
+  transform-box: fill-box;
+  transform-origin: center;
+}
+
+/* Own-body faces (the ring) draw the mouth in the body colour; open mouths are strokes only. */
+.avatar-svg .avatar-mouth-own {
+  fill: var(--avatar-color);
+  stroke: var(--avatar-color);
+}
+
+.avatar-svg .avatar-mouth-line {
+  fill: none;
+}
+
+/* idle: slow blink and a subtle breath of the body only */
+.avatar-svg[data-state="idle"] .avatar-eye {
+  animation: avatar-blink 4s ease-in-out var(--avatar-phase, 0s) infinite;
+}
+
+.avatar-svg[data-state="idle"] .avatar-body {
+  animation: avatar-breathe 4s ease-in-out var(--avatar-phase, 0s) infinite;
+}
+
+/* thinking: eyes rise and turn slowly; the mouth drifts to one side and narrows */
+.avatar-svg[data-state="thinking"] .avatar-eyes {
+  animation: avatar-think 4s ease-in-out var(--avatar-phase, 0s) infinite;
+}
+
+.avatar-svg[data-state="thinking"] .avatar-mouth {
+  animation: avatar-mouth-think 4s ease-in-out var(--avatar-phase, 0s) infinite;
+}
+
+/* working: eyes sweep side to side, shaped per family; the mouth talks on an irregular rhythm */
+.avatar-svg[data-family="fases"][data-state="working"] .avatar-eyes {
+  animation: avatar-orbit 3.2s ease-in-out var(--avatar-phase, 0s) infinite;
+}
+
+.avatar-svg[data-family="monolito"][data-state="working"] .avatar-eyes {
+  animation: avatar-slide 3.2s ease-in-out var(--avatar-phase, 0s) infinite;
+}
+
+.avatar-svg[data-family="quadrantes"][data-state="working"] .avatar-eyes {
+  animation: avatar-sweep 3.2s steps(4) var(--avatar-phase, 0s) infinite;
+}
+
+.avatar-svg[data-state="working"] .avatar-mouth {
+  animation: avatar-mouth-talk 3s ease-in-out var(--avatar-phase, 0s) infinite;
+}
+
+.avatar-svg[data-family="quadrantes"][data-state="working"] .avatar-mouth {
+  animation: avatar-mouth-talk 3s steps(2) var(--avatar-phase, 0s) infinite;
+}
+
+/* alert: scale pulse, twice */
+.avatar-svg[data-state="alert"] {
+  animation: avatar-pulse 1.2s ease-in-out var(--avatar-phase, 0s) 2;
+}
+
+.avatar-svg[data-state="alert"] .avatar-mouth {
+  animation: avatar-mouth-alert 1.2s ease-in-out var(--avatar-phase, 0s) 2;
+}
+
+/* connecting: quick stepped bob of the eyes */
+.avatar-svg[data-state="connecting"] .avatar-eyes {
+  animation: avatar-connect 1.6s steps(2) var(--avatar-phase, 0s) infinite;
+}
+
+/* sleep: reduced, still eyes and a half-open mouth */
+.avatar-svg[data-state="sleep"] .avatar-eye {
+  transform: scaleY(0.3);
+}
+
+.avatar-svg[data-state="sleep"] .avatar-mouth {
+  transform: scaleY(0.5);
+}
+
+@keyframes avatar-blink {
+  0%,
+  92%,
+  100% {
+    transform: scaleY(1);
+  }
+  95% {
+    transform: scaleY(0.1);
+  }
+}
+
+@keyframes avatar-breathe {
+  0%,
+  100% {
+    transform: scale(1);
+  }
+  50% {
+    transform: scale(1.015);
+  }
+}
+
+@keyframes avatar-think {
+  0%,
+  100% {
+    transform: translateY(0) rotate(0deg);
+  }
+  50% {
+    transform: translateY(-2px) rotate(-4deg);
+  }
+}
+
+@keyframes avatar-mouth-think {
+  0%,
+  100% {
+    transform: translateX(0) scaleX(1);
+  }
+  50% {
+    transform: translateX(1.5px) scaleX(0.8);
+  }
+}
+
+@keyframes avatar-mouth-talk {
+  0%,
+  100% {
+    transform: scaleY(1);
+  }
+  12% {
+    transform: scaleY(0.6);
+  }
+  24% {
+    transform: scaleY(1);
+  }
+  38% {
+    transform: scaleY(0.6);
+  }
+  45% {
+    transform: scaleY(1);
+  }
+  60% {
+    transform: scaleY(0.6);
+  }
+  70% {
+    transform: scaleY(1);
+  }
+  86% {
+    transform: scaleY(0.6);
+  }
+}
+
+@keyframes avatar-mouth-alert {
+  0%,
+  100% {
+    transform: scale(1);
+  }
+  50% {
+    transform: scale(1.15);
+  }
+}
+
+@keyframes avatar-orbit {
+  0% {
+    transform: translate(0, 0);
+  }
+  25% {
+    transform: translate(2px, -1px);
+  }
+  50% {
+    transform: translate(0, -1.5px);
+  }
+  75% {
+    transform: translate(-2px, -1px);
+  }
+  100% {
+    transform: translate(0, 0);
+  }
+}
+
+@keyframes avatar-slide {
+  0%,
+  100% {
+    transform: translateX(-3px);
+  }
+  50% {
+    transform: translateX(3px);
+  }
+}
+
+@keyframes avatar-sweep {
+  0% {
+    transform: translateX(-3px);
+  }
+  25% {
+    transform: translateX(-1px);
+  }
+  50% {
+    transform: translateX(1px);
+  }
+  75% {
+    transform: translateX(3px);
+  }
+  100% {
+    transform: translateX(-3px);
+  }
+}
+
+@keyframes avatar-connect {
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-2px);
+  }
+}
+
+@keyframes avatar-pulse {
+  0%,
+  100% {
+    transform: scale(1);
+  }
+  50% {
+    transform: scale(1.06);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .avatar-svg,
+  .avatar-svg * {
+    animation: none !important;
+  }
+}

@@ -1,0 +1,71 @@
+# Luna Bot architecture
+
+Luna Bot is a Bun workspace with one packaged desktop application and small packages for code that
+has more than one consumer.
+
+## Workspace map
+
+```text
+packages/
+  contracts/         Process boundary types, limits, and pure validation
+src/
+  backend/           Agent runtime, provider adapters, event storage, queues, and browser host
+  main/              Electron lifecycle, trusted IPC, and operating-system adapters
+  preload/           Narrow typed bridge from Electron main to the renderer
+  renderer/          SolidJS user interface
+scripts/             Development, smoke, release, and package verification entry points
+```
+
+The desktop application stays at the repository root. Its package metadata is also the release
+metadata used by Electron Builder. Moving it into `apps/desktop` would create a second version source
+and add package-signing risk without adding a useful runtime boundary.
+
+## Dependency direction
+
+Dependencies point toward stable boundaries:
+
+```text
+renderer ──► @lunabot/contracts ◄── preload ◄── main ──► backend
+```
+
+- `packages/contracts` has no Electron, Node.js, SolidJS, or provider dependency.
+- The renderer cannot import `src/main` or `src/backend`.
+- The preload bridge contains no business rules. It maps typed calls to IPC channels.
+- Electron main validates untrusted IPC input before it calls a service.
+- Provider code cannot write UI state. It sends events to `AgentService`, which writes SQLite
+  projections before the main process sends changes to the renderer.
+
+## State ownership
+
+- `lunabot.db` is the source of truth for Luna Bot agents, conversations, queues, reactions,
+  attachments, and provider-session bindings.
+- `~/.codex`, `~/.claude`, and `~/.grok` are provider-owned login and resume state. They are not Luna Bot
+  conversation storage.
+- Renderer signals are projections for the current screen only. They are not durable state.
+
+## Theme system
+
+- `src/renderer/src/theme.ts` holds two preferences (theme: auto|papel|eclipse|quadrante; mode: system|light|dark) in `localStorage` as `lunabot:theme` and `lunabot:mode`, and sets `data-theme`, `data-mode`, and `color-scheme` on `<html>`.
+- Palettes live only in the six `:root[data-theme][data-mode]` blocks at the top of `src/renderer/src/styles.css`; edit colors there, not in components. `theme-contrast.test.ts` enforces their WCAG ratios.
+- The same `{theme, mode}` goes to the main process via `app:set-theme`, which sets `nativeTheme.themeSource` and the window background from `src/main/native-theme.ts`.
+
+## Change rules
+
+1. Put a type in `packages/contracts` only when it crosses a process or application boundary.
+2. Put a validation rule beside the contract when all consumers must use the same limit or syntax.
+3. Keep provider-specific payloads inside the provider adapter. Translate them at ingestion.
+4. Keep database schema changes in the schema module and add migration tests.
+5. Keep Electron entry points small. New features use a service or a focused IPC input module.
+6. Do not add a second linter or formatter. Biome and its repository-owned anti-slop plugins are the
+   only repository lint and format tools.
+7. Do not add temporary compatibility paths without a removal condition and a test for that condition.
+
+SQLite migration history starts at the frozen version 8 compatibility baseline. Keep the baseline
+schema unchanged, append every later migration in numeric order, and update the separate latest
+schema used for new databases. Never remove or rewrite a migration that may have shipped.
+
+## Required verification
+
+Run `bun run check` for normal changes. Changes to packaging, native modules, or Electron security
+also require the applicable macOS and Windows package verification commands. Live provider
+smoke tests use isolated temporary data and are manual because they can require local credentials.

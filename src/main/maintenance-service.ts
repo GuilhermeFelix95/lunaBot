@@ -1,0 +1,174 @@
+import { randomUUID } from "node:crypto";
+import { copyFile, mkdir, mkdtemp, rename, rm, writeFile } from "node:fs/promises";
+import { arch, release as osRelease, tmpdir } from "node:os";
+import { dirname, join } from "node:path";
+import type { BotSummary, ExportResult } from "@lunabot/contracts/ipc";
+import { app, type BrowserWindow, dialog } from "electron";
+import type { AgentService } from "../backend/agent-service";
+import type { BrowserHost } from "../backend/browser-host";
+import type { MailboxStore } from "../backend/mailbox-store";
+import type { UpdateService } from "./update-service";
+import { createExportArchive } from "./zip-archive";
+
+interface MaintenanceContext {
+  service: AgentService;
+  browser: BrowserHost;
+  mailbox: MailboxStore;
+  updater: UpdateService;
+  parentWindow: BrowserWindow | null;
+}
+
+export async function exportLunaBotData(
+  context: Pick<MaintenanceContext, "service" | "mailbox" | "parentWindow">,
+): Promise<ExportResult> {
+  const destination = await chooseExportDestination(
+    context.parentWindow,
+    `LunaBot-backup-${new Date().toISOString().slice(0, 10)}.zip`,
+    [{ name: "ZIP archive", extensions: ["zip"] }],
+  );
+  if (!destination) return { saved: false };
+
+  const temporaryRoot = await mkdtemp(join(tmpdir(), "lunabot-export-"));
+  const exportRoot = join(temporaryRoot, "Luna Bot Backup");
+  const archiveCandidate = `${destination}.${randomUUID()}.tmp.zip`;
+  try {
+    await mkdir(exportRoot, { recursive: true, mode: 0o700 });
+    const bots = context.service.listBots();
+    const [conversations, queues, attachments] = await Promise.all([
+      Promise.all(bots.map((bot) => context.service.readConversation(bot.id))),
+      Promise.resolve(bots.map((bot) => context.service.listQueue(bot.id))),
+      context.mailbox.listExportAttachments(),
+    ]);
+    const manifest = {
+      schemaVersion: 3,
+      exportedAt: new Date().toISOString(),
+      application: { name: "Luna Bot", version: app.getVersion() },
+      scope: {
+        includes: ["agent profiles", "agent memories", "conversation snapshots", "queues", "attachments"],
+        excludes: ["Codex credentials", "browser cookies", "agent workspace files"],
+      },
+      bots: bots.map(toBackupBot),
+      memories: bots.flatMap((bot) => context.service.listMemories(bot.id)),
+      conversations,
+      queues,
+    };
+    await writeFile(join(exportRoot, "lunabot-data.json"), `${JSON.stringify(manifest, null, 2)}\n`, {
+      encoding: "utf8",
+      mode: 0o600,
+    });
+    for (const attachment of attachments) {
+      const target = join(exportRoot, attachment.relativePath);
+      await mkdir(dirname(target), { recursive: true, mode: 0o700 });
+      await copyFile(attachment.sourcePath, target);
+    }
+    await createExportArchive(exportRoot, archiveCandidate, process.platform);
+    await rename(archiveCandidate, destination);
+    return { saved: true };
+  } finally {
+    await Promise.all([rm(temporaryRoot, { recursive: true, force: true }), rm(archiveCandidate, { force: true })]);
+  }
+}
+
+export async function exportDiagnostics(
+  context: Pick<MaintenanceContext, "service" | "browser" | "updater" | "parentWindow">,
+): Promise<ExportResult> {
+  const destination = await chooseExportDestination(
+    context.parentWindow,
+    `LunaBot-diagnostics-${new Date().toISOString().slice(0, 10)}.json`,
+    [{ name: "JSON document", extensions: ["json"] }],
+  );
+  if (!destination) return { saved: false };
+
+  const status = context.service.getStatus();
+  const bots = context.service.listBots();
+  const queueCounts = bots.map((bot) => {
+    const queue = context.service.listQueue(bot.id);
+    return {
+      botId: bot.id,
+      deliveries: Object.fromEntries(
+        ["queued", "starting", "running", "completed", "failed", "interrupted", "cancelled"].map((deliveryStatus) => [
+          deliveryStatus,
+          queue.deliveries.filter((delivery) => delivery.status === deliveryStatus).length,
+        ]),
+      ),
+    };
+  });
+  const update = context.updater.getStatus();
+  const diagnostics = {
+    schemaVersion: 2,
+    generatedAt: new Date().toISOString(),
+    application: {
+      version: app.getVersion(),
+      packaged: app.isPackaged,
+      platform: process.platform,
+      architecture: arch(),
+      osRelease: osRelease(),
+      electron: process.versions.electron,
+      chromium: process.versions.chrome,
+      node: process.versions.node,
+    },
+    agent: {
+      phase: status.phase,
+      cliVersion: status.cliVersion,
+      authentication: status.auth.kind,
+      capabilities: status.capabilities,
+      fullAccess: status.fullAccess,
+      botCount: bots.length,
+      queues: queueCounts,
+    },
+    browser: {
+      tabCount: context.browser.listTabs().length,
+      activeControlCount: context.browser.getControlState().sessions.length,
+    },
+    update: {
+      phase: update.phase,
+      currentVersion: update.currentVersion,
+      availableVersion: update.availableVersion,
+      progress: update.progress,
+      checkedAt: update.checkedAt,
+      errorCode: update.errorCode,
+      history: context.updater.getDiagnostics(),
+    },
+    privacy: "Raw error messages, file paths, file contents, tokens, emails, URLs, and conversations are left out.",
+  };
+  await writeFile(destination, `${JSON.stringify(diagnostics, null, 2)}\n`, {
+    encoding: "utf8",
+    mode: 0o600,
+  });
+  return { saved: true };
+}
+
+async function chooseExportDestination(
+  parentWindow: BrowserWindow | null,
+  defaultName: string,
+  filters: Electron.FileFilter[],
+): Promise<string | null> {
+  const options: Electron.SaveDialogOptions = {
+    defaultPath: join(app.getPath("documents"), defaultName),
+    filters,
+    showsTagField: false,
+  };
+  const result = parentWindow
+    ? await dialog.showSaveDialog(parentWindow, options)
+    : await dialog.showSaveDialog(options);
+  return result.canceled || !result.filePath ? null : result.filePath;
+}
+
+function toBackupBot(bot: BotSummary): Omit<BotSummary, "workspacePath"> {
+  return {
+    id: bot.id,
+    provider: bot.provider,
+    name: bot.name,
+    title: bot.title,
+    description: bot.description,
+    notifications: bot.notifications,
+    model: bot.model,
+    reasoningEffort: bot.reasoningEffort,
+    threadId: bot.threadId,
+    preview: bot.preview,
+    updatedAt: bot.updatedAt,
+    avatarSeed: bot.avatarSeed,
+    avatarHue: bot.avatarHue,
+    avatarUrl: bot.avatarUrl,
+  };
+}

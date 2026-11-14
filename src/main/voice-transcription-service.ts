@@ -1,0 +1,149 @@
+import { type ChildProcess, execFile } from "node:child_process";
+import { EventEmitter } from "node:events";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { INPUT_LIMITS } from "@lunabot/contracts/input-limits";
+import type { VoiceModelStatus, VoiceTranscriptionResult } from "@lunabot/contracts/ipc";
+import { isString } from "@lunabot/contracts/runtime-values";
+import { nativeMessage } from "./native-messages";
+import { VoiceModelService } from "./voice-model-service";
+
+const TRANSCRIPTION_TIMEOUT_MS = 180_000;
+
+interface VoiceTranscriptionEvents {
+  modelStatus: [status: VoiceModelStatus];
+}
+
+interface VoiceTranscriptionServiceOptions {
+  resourcesRoot: string;
+  modelPath: string;
+  modelDownloadUrl: string | null;
+  fetch?: (input: string | URL | Request, init?: RequestInit) => Promise<Response>;
+}
+
+export class VoiceTranscriptionService extends EventEmitter<VoiceTranscriptionEvents> {
+  private activeChild: ChildProcess | null = null;
+  private busy = false;
+  private readonly resourcesRoot: string;
+  private readonly model: VoiceModelService;
+
+  constructor(options: VoiceTranscriptionServiceOptions) {
+    super();
+    this.resourcesRoot = options.resourcesRoot;
+    this.model = new VoiceModelService({
+      modelPath: options.modelPath,
+      downloadUrl: options.modelDownloadUrl,
+      fetch: options.fetch,
+    });
+    this.model.on("status", (status) => this.emit("modelStatus", status));
+  }
+
+  getModelStatus(): Promise<VoiceModelStatus> {
+    return this.model.getStatus();
+  }
+
+  prepareModel(): Promise<VoiceModelStatus> {
+    return this.model.prepare();
+  }
+
+  async transcribe(audio: Uint8Array): Promise<VoiceTranscriptionResult> {
+    if (this.busy) throw new Error("A voice transcription is already in progress.");
+    this.busy = true;
+    let temporaryRoot: string | undefined;
+    const executable = join(
+      this.resourcesRoot,
+      "bin",
+      process.platform === "win32" ? "whisper-cli.exe" : "whisper-cli",
+    );
+    const modelStatus = await this.model.prepare();
+    if (modelStatus.phase !== "ready")
+      throw new Error(modelStatus.message ?? nativeMessage("errors.voice.modelUnavailable"));
+    const model = this.model.modelPath;
+    const startedAt = Date.now();
+
+    try {
+      temporaryRoot = await mkdtemp(join(tmpdir(), "lunabot-voice-"));
+      const inputPath = join(temporaryRoot, "recording.wav");
+      const outputPath = join(temporaryRoot, "transcript");
+      await writeFile(inputPath, audio);
+      await this.run(executable, [
+        "--model",
+        model,
+        "--file",
+        inputPath,
+        "--language",
+        "auto",
+        "--output-txt",
+        "--output-file",
+        outputPath,
+        "--no-timestamps",
+        "--no-gpu",
+        "--threads",
+        "4",
+      ]);
+      const text = (await readFile(`${outputPath}.txt`, "utf8")).trim();
+      if (text.length > INPUT_LIMITS.messageText) throw new Error(nativeMessage("errors.voice.transcriptTooLong"));
+      console.info(`Voice transcription completed in ${Date.now() - startedAt}ms.`);
+      return { text };
+    } catch (error) {
+      console.error(`Voice transcription failed after ${Date.now() - startedAt}ms.`, errorCategory(error));
+      throw userFacingError(error);
+    } finally {
+      this.activeChild = null;
+      this.busy = false;
+      if (temporaryRoot) await rm(temporaryRoot, { recursive: true, force: true });
+    }
+  }
+
+  shutdown(): void {
+    this.model.shutdown();
+    this.activeChild?.kill();
+    this.activeChild = null;
+  }
+
+  private run(executable: string, arguments_: string[]): Promise<void> {
+    return new Promise((resolveRun, rejectRun) => {
+      const child = execFile(executable, arguments_, { windowsHide: true });
+      this.activeChild = child;
+      let stderr = "";
+      child.stderr?.setEncoding("utf8");
+      child.stderr?.on("data", (chunk: string) => {
+        stderr = `${stderr}${chunk}`.slice(-4_000);
+      });
+      const timer = setTimeout(() => {
+        child.kill();
+        rejectRun(new Error(nativeMessage("errors.voice.transcriptionTimedOut")));
+      }, TRANSCRIPTION_TIMEOUT_MS);
+      child.once("error", (error) => {
+        clearTimeout(timer);
+        rejectRun(error);
+      });
+      child.once("exit", (code, signal) => {
+        clearTimeout(timer);
+        if (code === 0) resolveRun();
+        else rejectRun(new Error(`Whisper exited with ${signal ?? `code ${String(code)}`}: ${stderr.trim()}`));
+      });
+    });
+  }
+}
+
+function errorCategory(error: unknown): "unknown" | "runtime-unavailable" | "timeout" | "inference-failed" {
+  if (!(error instanceof Error)) return "unknown";
+  if (errorCode(error) === "ENOENT") return "runtime-unavailable";
+  if (error.message.includes("timed out")) return "timeout";
+  return "inference-failed";
+}
+
+function userFacingError(error: unknown): Error {
+  if (error instanceof Error && error.message.includes("timed out")) return error;
+  if (error instanceof Error && errorCode(error) === "ENOENT") {
+    return new Error("Local voice transcription is unavailable. Run `bun run voice:prepare` and restart Luna Bot.");
+  }
+  return new Error("Luna Bot could not transcribe this recording.");
+}
+
+function errorCode(error: Error): string | undefined {
+  const code = "code" in error ? error.code : undefined;
+  return isString(code) ? code : undefined;
+}

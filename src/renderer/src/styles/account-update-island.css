@@ -1,0 +1,309 @@
+.account-update-island {
+  --panel-open-dur: calc(var(--lunabot-duration-slow) + var(--lunabot-duration-slow));
+  --panel-close-dur: calc(var(--lunabot-duration-slow) + var(--lunabot-duration-normal));
+  --panel-translate-y: calc(100% - var(--lunabot-space-3));
+  --panel-blur: var(--lunabot-space-0-5);
+  --panel-ease: var(--lunabot-ease-out);
+  --text-swap-dur: var(--lunabot-duration-normal);
+  --text-swap-translate-y: var(--lunabot-space-1);
+  --text-swap-blur: var(--lunabot-space-0-5);
+  --text-swap-ease: var(--lunabot-ease-in-out);
+  --digit-dur: var(--lunabot-duration-slow);
+  --digit-distance: var(--lunabot-space-1);
+  --digit-stagger: calc(var(--lunabot-duration-fast) - var(--lunabot-duration-dialog));
+  --digit-blur: var(--lunabot-space-0-5);
+  --digit-ease: var(--lunabot-ease-out);
+  --digit-dir-x: 0;
+  --digit-dir-y: 1;
+
+  position: absolute;
+  z-index: 0;
+  right: var(--lunabot-space-4);
+  bottom: var(--lunabot-control-xl);
+  left: var(--lunabot-space-4);
+  display: grid;
+  min-height: calc(var(--lunabot-control-xl) + var(--lunabot-radius-dialog));
+  align-items: center;
+  border: 0;
+  border-radius: var(--lunabot-radius-lg) var(--lunabot-radius-lg) var(--lunabot-radius-md) var(--lunabot-radius-md);
+  background: var(--lunabot-settings-accent-strong);
+  box-shadow: 0 0 0 1px var(--lunabot-settings-accent-soft);
+  -webkit-backdrop-filter: blur(var(--lunabot-space-3));
+  backdrop-filter: blur(var(--lunabot-space-3));
+  padding: calc(var(--lunabot-space-1) + 1px) var(--lunabot-space-1-5)
+    calc(var(--lunabot-space-4) + var(--lunabot-space-1) - 1px);
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: var(--lunabot-space-2);
+  color: var(--lunabot-settings-accent-text);
+  -webkit-font-smoothing: antialiased;
+}
+
+.account-update-island.t-panel-slide {
+  transform: translateY(var(--panel-translate-y));
+  opacity: 0;
+  filter: blur(var(--panel-blur));
+  pointer-events: none;
+  transition:
+    transform var(--panel-close-dur) var(--panel-ease),
+    opacity var(--panel-close-dur) var(--panel-ease),
+    filter var(--panel-close-dur) var(--panel-ease);
+  will-change: transform, opacity, filter;
+}
+
+.account-update-island.t-panel-slide[data-open="true"] {
+  transform: translateY(0);
+  opacity: 1;
+  filter: blur(0);
+  pointer-events: auto;
+  transition:
+    transform var(--panel-open-dur) var(--panel-ease),
+    opacity var(--panel-open-dur) var(--panel-ease),
+    filter var(--panel-open-dur) var(--panel-ease);
+}
+
+.account-update-island__copy {
+  min-width: 0;
+}
+
+.account-update-island__copy strong {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--lunabot-settings-accent-text);
+  font-size: var(--lunabot-text-sm);
+  font-weight: var(--lunabot-weight-semibold);
+  line-height: var(--lunabot-leading-sm);
+  white-space: nowrap;
+}
+
+.account-update-island .t-update-text-swap {
+  display: inline-grid;
+}
+
+.account-update-island .t-update-text-swap > [data-text] {
+  grid-area: 1 / 1;
+  transform: translateY(0);
+  opacity: 1;
+  filter: blur(0);
+  transition:
+    transform var(--text-swap-dur) var(--text-swap-ease),
+    filter var(--text-swap-dur) var(--text-swap-ease),
+    opacity var(--text-swap-dur) var(--text-swap-ease);
+  will-change: transform, filter, opacity;
+}
+
+.account-update-island
+  .t-update-text-swap:is([data-state="available"], [data-state="action"])
+  > [data-text]:is([data-text="ready"], [data-text="progress"], [data-text="error"]) {
+  transform: translateY(var(--text-swap-translate-y));
+  opacity: 0;
+  filter: blur(var(--text-swap-blur));
+}
+
+.account-update-island
+  .t-update-text-swap:is([data-state="ready"], [data-state="progress"])
+  > [data-text]:is([data-text="available"], [data-text="action"], [data-text="error"]) {
+  transform: translateY(calc(var(--text-swap-translate-y) * -1));
+  opacity: 0;
+  filter: blur(var(--text-swap-blur));
+}
+
+.account-update-island .t-update-text-swap[data-state="error"] > [data-text]:not([data-text="error"]) {
+  transform: translateY(calc(var(--text-swap-translate-y) * -1));
+  opacity: 0;
+  filter: blur(var(--text-swap-blur));
+}
+
+.account-update-island__action-shell {
+  position: relative;
+  display: grid;
+  width: calc(var(--lunabot-control-xl) + var(--lunabot-control-xl) + var(--lunabot-space-6) + var(--lunabot-space-1));
+  min-width: calc(var(--lunabot-control-xl) + var(--lunabot-control-xl) + var(--lunabot-space-3));
+  flex-shrink: 0;
+}
+
+.account-update-island__action.ui-button {
+  width: 100%;
+  height: var(--lunabot-control-sm);
+  min-height: var(--lunabot-control-sm);
+  border-radius: var(--lunabot-radius-sm);
+  background: var(--lunabot-surface-inverse);
+  box-shadow: 0 1px 2px var(--lunabot-shadow-popover-key);
+  padding: 0 var(--lunabot-space-3) 0 var(--lunabot-space-2);
+  color: var(--lunabot-text-inverse);
+  transition:
+    box-shadow var(--lunabot-duration-normal) var(--lunabot-ease-out),
+    transform var(--lunabot-duration-fast) var(--lunabot-ease-out);
+}
+
+.account-update-island__action.ui-button::after {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: calc(100% + var(--lunabot-space-4));
+  min-width: var(--lunabot-control-xl);
+  height: var(--lunabot-control-xl);
+  transform: translate(-50%, -50%);
+  content: "";
+}
+
+.account-update-island__action.ui-button:disabled {
+  cursor: progress;
+  opacity: 1;
+}
+
+.account-update-island__action-content {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--lunabot-space-1-5);
+}
+
+.account-update-island__action-label {
+  min-width: calc(var(--lunabot-control-xl) + var(--lunabot-space-3));
+  color: var(--lunabot-text-inverse);
+  font-weight: var(--lunabot-weight-semibold);
+  text-align: left;
+}
+
+.account-update-island__progress-value {
+  display: inline-grid;
+  align-items: baseline;
+  grid-template-columns: 3ch max-content;
+  font-size: var(--lunabot-text-sm);
+  font-weight: var(--lunabot-weight-semibold);
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+}
+
+.account-update-island__progress-digits {
+  display: inline-flex;
+  justify-content: flex-end;
+}
+
+.account-update-island__progress-suffix,
+.account-update-island__busy-label {
+  display: inline-block;
+}
+
+@keyframes account-update-digit-pop-in {
+  0% {
+    transform: translate(
+      calc(var(--digit-distance) * var(--digit-dir-x)),
+      calc(var(--digit-distance) * var(--digit-dir-y))
+    );
+    opacity: 0.4;
+    filter: blur(var(--digit-blur));
+  }
+
+  100% {
+    transform: translate(0, 0);
+    opacity: 1;
+    filter: blur(0);
+  }
+}
+
+.account-update-island__progress-value .t-digit {
+  display: inline-block;
+  will-change: transform, opacity, filter;
+}
+
+.account-update-island__progress-digits.is-animating .t-digit {
+  animation: account-update-digit-pop-in var(--digit-dur) var(--digit-ease) both;
+}
+
+.account-update-island__progress-digits.is-animating .t-digit[data-stagger="1"] {
+  animation-delay: var(--digit-stagger);
+}
+
+.account-update-island__progress-digits.is-animating .t-digit[data-stagger="2"] {
+  animation-delay: calc(var(--digit-stagger) * 2);
+}
+
+.account-update-island__action-shell[data-downloading="true"] .account-update-island__action-label {
+  min-width: var(--lunabot-control-md);
+  text-align: center;
+}
+
+.account-update-island__action-shell[data-downloading="true"] .account-update-island__action.ui-button {
+  padding-inline: var(--lunabot-space-2);
+}
+
+.account-update-island__icon.t-icon-swap {
+  --icon-swap-dur: var(--lunabot-duration-overlay);
+  --icon-swap-blur: var(--lunabot-space-0-5);
+  --icon-swap-start-scale: 0.25;
+  --icon-swap-ease: var(--lunabot-ease-in-out);
+
+  position: relative;
+  display: inline-grid;
+  width: var(--lunabot-icon-sm);
+  height: var(--lunabot-icon-sm);
+  flex: 0 0 auto;
+  place-items: center;
+}
+
+.account-update-island__icon.t-icon-swap .t-icon {
+  position: relative;
+  top: 1px;
+  display: grid;
+  grid-area: 1 / 1;
+  place-items: center;
+  transition:
+    opacity var(--icon-swap-dur) var(--icon-swap-ease),
+    filter var(--icon-swap-dur) var(--icon-swap-ease),
+    transform var(--icon-swap-dur) var(--icon-swap-ease);
+  will-change: opacity, filter, transform;
+}
+
+.account-update-island__icon.t-icon-swap svg {
+  width: var(--lunabot-icon-sm);
+  height: var(--lunabot-icon-sm);
+  stroke-width: 2;
+}
+
+.account-update-island__icon.t-icon-swap .ui-spinner {
+  border-color: var(--lunabot-text-dim-inverse);
+  border-top-color: currentColor;
+}
+
+.account-update-island__icon.t-icon-swap[data-state="a"] .t-icon[data-icon="a"],
+.account-update-island__icon.t-icon-swap[data-state="b"] .t-icon[data-icon="b"] {
+  transform: scale(1);
+  opacity: 1;
+  filter: blur(0);
+}
+
+.account-update-island__icon.t-icon-swap[data-state="a"] .t-icon[data-icon="b"],
+.account-update-island__icon.t-icon-swap[data-state="b"] .t-icon[data-icon="a"] {
+  transform: scale(var(--icon-swap-start-scale));
+  opacity: 0;
+  filter: blur(var(--icon-swap-blur));
+}
+
+.account-update-island__action.ui-button:active:not(:disabled):not([data-disabled]) {
+  transform: scale(0.96);
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .account-update-island__action.ui-button:hover:not(:disabled):not([data-disabled]) {
+    background: var(--lunabot-surface-inverse);
+    box-shadow:
+      0 0 0 1px var(--lunabot-text-dim-inverse),
+      0 1px 2px var(--lunabot-shadow-popover-key);
+    color: var(--lunabot-text-inverse);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .account-update-island.t-panel-slide,
+  .account-update-island__action.ui-button,
+  .account-update-island__icon.t-icon-swap .t-icon,
+  .account-update-island .t-update-text-swap > [data-text] {
+    transition: none;
+  }
+
+  .account-update-island__progress-value .t-digit {
+    animation: none;
+  }
+}

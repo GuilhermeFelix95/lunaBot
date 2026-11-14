@@ -1,0 +1,134 @@
+import { serializeAttachmentReference } from "@lunabot/contracts/attachment-references";
+import { fireEvent, render, screen } from "@solidjs/testing-library";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { RichMessageText } from "./RichMessageText";
+
+const originalMatchMedia = window.matchMedia;
+
+afterEach(() => {
+  window.matchMedia = originalMatchMedia;
+});
+
+describe("RichMessageText tooltips", () => {
+  it("renders a plain attached file name as a styled reference", async () => {
+    const attachment = {
+      id: "report",
+      name: "raport.csv",
+      size: 1_024,
+      kind: "file" as const,
+      mimeType: "text/csv",
+      previewKind: "text" as const,
+      previewUrl: null,
+    };
+    const onOpenAttachment = vi.fn();
+    render(() => (
+      <RichMessageText
+        body="Here is raport.csv."
+        bots={[]}
+        attachments={[attachment]}
+        onSelectAgent={vi.fn()}
+        onOpenLink={vi.fn()}
+        onOpenAttachment={onOpenAttachment}
+      />
+    ));
+
+    const reference = screen.getByRole("button", { name: "Open the attachment named raport.csv" });
+    expect(reference).toHaveTextContent("CSV");
+    expect(reference).not.toHaveTextContent("/LunaBot/");
+    await fireEvent.click(reference);
+    expect(onOpenAttachment).toHaveBeenCalledWith(attachment);
+  });
+
+  it("renders a shared path as a styled system-open reference", async () => {
+    const onOpenSharedFile = vi.fn();
+    render(() => (
+      <RichMessageText
+        body="Open ~/LunaBot/Shared/raport.csv."
+        bots={[]}
+        onSelectAgent={vi.fn()}
+        onOpenLink={vi.fn()}
+        onOpenSharedFile={onOpenSharedFile}
+      />
+    ));
+
+    const reference = screen.getByRole("button", { name: "Open the file raport.csv that was shared" });
+    expect(reference).toHaveTextContent("CSV");
+    expect(reference).not.toHaveTextContent("~/LunaBot/Shared");
+    await fireEvent.click(reference);
+    expect(onOpenSharedFile).toHaveBeenCalledWith("~/LunaBot/Shared/raport.csv");
+  });
+
+  it("associates a citation tooltip with its trigger and closes it with Escape", async () => {
+    const onOpenLink = vi.fn();
+    render(() => (
+      <RichMessageText
+        body="Read the source [1]."
+        bots={[]}
+        citations={[
+          {
+            number: 1,
+            label: "Attention Is All You Need",
+            url: "https://arxiv.org/abs/1706.03762",
+            host: "arxiv.org",
+          },
+        ]}
+        onSelectAgent={vi.fn()}
+        onOpenLink={onOpenLink}
+      />
+    ));
+
+    const citation = screen.getByRole("link", {
+      name: "Go to citation 1: Attention Is All You Need",
+    });
+    await fireEvent.focus(citation);
+    const tooltip = await screen.findByRole("tooltip");
+    expect(citation).toHaveAttribute("aria-describedby", tooltip.id);
+    expect(tooltip).toHaveTextContent("Attention Is All You Need");
+
+    await fireEvent.keyDown(citation, { key: "Escape" });
+    expect(screen.queryByRole("tooltip")).toBeNull();
+
+    await fireEvent.click(citation);
+    expect(onOpenLink).toHaveBeenLastCalledWith("https://arxiv.org/abs/1706.03762");
+
+    await fireEvent.click(screen.getByRole("link", { name: "Source 1, Attention Is All You Need: open" }));
+    expect(onOpenLink).toHaveBeenCalledTimes(2);
+    expect(onOpenLink).toHaveBeenLastCalledWith("https://arxiv.org/abs/1706.03762");
+  });
+
+  it("keeps a truncated file name visible after a touch tap while opening the file", async () => {
+    window.matchMedia = vi.fn().mockReturnValue({ matches: true });
+    const attachment = {
+      id: "touch-file",
+      name: "a-very-long-touch-friendly-file-name.pdf",
+      size: 1_024,
+      kind: "file" as const,
+      mimeType: "application/pdf",
+      previewKind: "pdf" as const,
+      previewUrl: null,
+    };
+    const onOpenAttachment = vi.fn();
+    render(() => (
+      <RichMessageText
+        body={`Review ${serializeAttachmentReference(attachment.name, attachment.id)}`}
+        bots={[]}
+        attachments={[attachment]}
+        onSelectAgent={vi.fn()}
+        onOpenLink={vi.fn()}
+        onOpenAttachment={onOpenAttachment}
+      />
+    ));
+
+    const reference = screen.getByRole("button", { name: `Open the attachment named ${attachment.name}` });
+    const label = reference.querySelector<HTMLElement>(".inline-file-reference-name");
+    if (!label) throw new Error("The touch file label is missing");
+    Object.defineProperties(label, {
+      clientWidth: { configurable: true, value: 120 },
+      scrollWidth: { configurable: true, value: 320 },
+    });
+
+    await fireEvent.click(reference);
+    expect(onOpenAttachment).toHaveBeenCalledWith(attachment);
+    expect(await screen.findByRole("tooltip")).toHaveTextContent(attachment.name);
+  });
+});

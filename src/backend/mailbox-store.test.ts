@@ -1,0 +1,665 @@
+// @vitest-environment node
+
+import { access, mkdir, mkdtemp, open, readFile, rm, symlink, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { serializeAttachmentReference } from "@lunabot/contracts/attachment-references";
+import { INPUT_LIMITS } from "@lunabot/contracts/input-limits";
+import { AGENT_RUNTIME_TEXT_LIMIT, AGENT_RUNTIME_WORKING_ITEMS_LIMIT } from "@lunabot/contracts/ipc";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { canCreateSymlinks, removeDirectory } from "../test-utils/fs";
+import { LunaBotDatabase } from "./lunabot-database";
+import { MailboxStore } from "./mailbox-store";
+
+let root: string;
+let store: MailboxStore;
+const openDatabases: LunaBotDatabase[] = [];
+
+function openMailboxStore(userData: string, shared: string): MailboxStore {
+  const database = new LunaBotDatabase(userData);
+  openDatabases.push(database);
+  return new MailboxStore(userData, shared, database);
+}
+
+beforeEach(async () => {
+  root = await mkdtemp(join(tmpdir(), "lunabot-mailbox-test-"));
+  store = openMailboxStore(join(root, "user-data"), join(root, "Shared"));
+  await store.initialize();
+});
+
+afterEach(async () => {
+  for (const database of openDatabases.splice(0)) database.close();
+  await removeDirectory(root);
+});
+
+describe("MailboxStore", () => {
+  it("keeps staged generated attachments out of unrelated mailbox writes", async () => {
+    const sourcePath = join(root, "staged-screenshot.png");
+    await writeFile(sourcePath, "image bytes");
+    const source = await open(sourcePath, "r");
+    const staged = await store.stageGeneratedAttachments({ sources: [{ path: sourcePath, handle: source }] });
+    await source.close();
+
+    await expect(store.listExportAttachments()).resolves.toEqual([]);
+    await store.enqueue({ sender: { kind: "user" }, recipientBotIds: ["chief"], text: "Unrelated work" });
+    const restored = openMailboxStore(join(root, "user-data"), join(root, "Shared"));
+    await restored.initialize();
+    await expect(restored.listExportAttachments()).resolves.toEqual([]);
+
+    await store.discardStagedGeneratedAttachments(staged.map((attachment) => attachment.id));
+  });
+
+  it("preserves the extension when it shortens a long attachment name", async () => {
+    const source = join(root, `${"screenshot-".repeat(19)}capture.png`);
+    await writeFile(source, "image bytes");
+
+    const [draft] = await store.prepareAttachments([source]);
+
+    expect(draft.name).toHaveLength(180);
+    expect(draft).toMatchObject({ kind: "image", mimeType: "image/png", previewKind: "image" });
+    expect(draft.name.endsWith(".png")).toBe(true);
+  });
+
+  it("keeps runtime queues small and excludes queued work", async () => {
+    const source = join(root, "runtime.txt");
+    await writeFile(source, "runtime attachment");
+    const [draft] = await store.prepareAttachments([source]);
+    const botIds = Array.from({ length: AGENT_RUNTIME_WORKING_ITEMS_LIMIT + 2 }, (_, index) => `bot-${index}`);
+    for (const [index, botId] of botIds.entries()) {
+      const receipt = await store.enqueue({
+        sender: { kind: "user" },
+        recipientBotIds: [botId],
+        text: index === 0 ? "x".repeat(AGENT_RUNTIME_TEXT_LIMIT + 100) : `Work ${index}`,
+        draftIds: index === 0 ? [draft.id] : undefined,
+      });
+      const deliveryId = receipt.deliveries[0].id;
+      await store.markStarting(deliveryId);
+      await store.markRunning(deliveryId, `turn-${index}`);
+    }
+    await store.enqueue({ sender: { kind: "user" }, recipientBotIds: ["queued"], text: "Still queued" });
+
+    const runtime = store.listRuntimeWork([...botIds, "queued"], new Map());
+
+    expect(runtime).toHaveLength(AGENT_RUNTIME_WORKING_ITEMS_LIMIT);
+    expect(runtime[0]).toMatchObject({
+      text: "x".repeat(AGENT_RUNTIME_TEXT_LIMIT),
+      status: "running",
+    });
+    expect(runtime.some((delivery) => delivery.text === "Still queued")).toBe(false);
+  });
+
+  it("imports mailbox.json once and keeps a legacy backup", async () => {
+    const userData = join(root, "legacy-user-data");
+    await mkdir(userData, { recursive: true });
+    const legacy = {
+      version: 1,
+      messages: [
+        {
+          id: "message-1",
+          sender: { kind: "user" },
+          text: "Legacy request",
+          attachments: [],
+          replyToMessageId: null,
+          createdAt: "2026-01-01T00:00:00.000Z",
+        },
+      ],
+      deliveries: [
+        {
+          id: "delivery-1",
+          messageId: "message-1",
+          recipientBotId: "chief",
+          status: "completed",
+          turnId: "turn-1",
+          error: null,
+          createdAt: "2026-01-01T00:00:00.000Z",
+        },
+      ],
+      drafts: [],
+      pausedBotIds: [],
+      idempotency: {},
+      reactions: [],
+    };
+    const legacyPath = join(userData, "mailbox.json");
+    await writeFile(legacyPath, `${JSON.stringify(legacy, null, 2)}\n`);
+    const imported = openMailboxStore(userData, join(root, "Legacy Shared"));
+    await imported.initialize();
+
+    expect(imported.listQueue("chief").deliveries).toMatchObject([
+      { id: "delivery-1", text: "Legacy request", status: "completed" },
+    ]);
+    await expect(readFile(join(userData, "legacy-backup-v1", "mailbox.json"), "utf8")).resolves.toContain(
+      "Legacy request",
+    );
+    const restored = openMailboxStore(userData, join(root, "Legacy Shared"));
+    await restored.initialize();
+    expect(restored.listQueue("chief").deliveries).toHaveLength(1);
+  });
+
+  it("copies attachments once and fans out independent FIFO deliveries", async () => {
+    const original = join(root, "report.csv");
+    await writeFile(original, "account,value\nAcme,42\n");
+    const drafts = await store.prepareAttachments([original]);
+    const receipt = await store.enqueue({
+      sender: { kind: "user" },
+      recipientBotIds: ["chief", "sales-outbound"],
+      text: "Review this data",
+      draftIds: drafts.map((draft) => draft.id),
+    });
+    await rm(original);
+
+    expect(receipt.deliveries).toHaveLength(2);
+    expect(receipt.deliveries.map((item) => item.position)).toEqual([1, 1]);
+    const first = store.getDelivery(receipt.deliveries[0].id);
+    const second = store.getDelivery(receipt.deliveries[1].id);
+    expect(first?.delivery.attachments[0]?.id).toBe(second?.delivery.attachments[0]?.id);
+    await expect(access(first?.managedAttachments[0]?.path ?? "missing")).resolves.toBeUndefined();
+
+    const manifest = JSON.parse(
+      await readFile(join(root, "Shared", "Transfers", receipt.messageId, ".lunabot-transfer.json"), "utf8"),
+    );
+    expect(manifest).toMatchObject({
+      version: 1,
+      kind: "message-transfer",
+      messageId: receipt.messageId,
+      sender: { kind: "user" },
+      recipientBotIds: ["chief", "sales-outbound"],
+      attachments: [
+        {
+          name: "report.csv",
+          relativePath: "report.csv",
+          size: 22,
+          sha256: expect.any(String),
+        },
+      ],
+    });
+  });
+
+  it("rejects managed attachments after their contents change", async () => {
+    const source = join(root, "mutable.txt");
+    await writeFile(source, "original");
+    const [draft] = await store.prepareAttachments([source]);
+    const receipt = await store.enqueue({
+      sender: { kind: "user" },
+      recipientBotIds: ["chief"],
+      text: "Review",
+      draftIds: [draft.id],
+    });
+    const attachment = store.getDelivery(receipt.deliveries[0].id)?.managedAttachments[0];
+    await writeFile(attachment?.path ?? "missing", "changed");
+
+    await expect(store.verifyDeliveryAttachments(receipt.deliveries[0].id)).rejects.toThrow("has changed");
+    await expect(store.resolveAttachment(attachment?.id ?? "")).resolves.toBeNull();
+    await expect(store.listExportAttachments()).resolves.toEqual([]);
+  });
+
+  it("remaps inline references from draft IDs to committed attachment IDs", async () => {
+    const original = join(root, "start-types.d.ts");
+    const extra = join(root, "AGENTS.md");
+    await writeFile(original, "export type Start = true;\n");
+    await writeFile(extra, "# Agents\n");
+    const [draft] = await store.prepareAttachments([original]);
+    const receipt = await store.enqueue({
+      sender: { kind: "user" },
+      recipientBotIds: ["chief"],
+      text: `Review ${serializeAttachmentReference(draft.name, draft.id)}`,
+      draftIds: [draft.id],
+    });
+    const deliveryId = receipt.deliveries[0].id;
+    const committed = store.getDelivery(deliveryId)?.delivery.attachments[0];
+    expect(committed).toBeDefined();
+    expect(store.getDelivery(deliveryId)?.delivery.text).toBe(
+      `Review ${serializeAttachmentReference("start-types.d.ts", committed?.id ?? "")}`,
+    );
+
+    const [extraDraft] = await store.prepareAttachments([extra]);
+    await store.updateQueuedMessage(
+      "chief",
+      deliveryId,
+      [
+        serializeAttachmentReference("start-types.d.ts", committed?.id ?? ""),
+        serializeAttachmentReference(extraDraft.name, extraDraft.id),
+        serializeAttachmentReference("missing.txt", "missing"),
+      ].join(" and "),
+      [committed?.id ?? ""],
+      [extraDraft.id],
+    );
+
+    const edited = store.getDelivery(deliveryId)?.delivery;
+    expect(edited?.attachments).toHaveLength(2);
+    expect(edited?.text).toBe(
+      [
+        serializeAttachmentReference("start-types.d.ts", edited?.attachments[0]?.id ?? ""),
+        serializeAttachmentReference("AGENTS.md", edited?.attachments[1]?.id ?? ""),
+        "missing.txt",
+      ].join(" and "),
+    );
+  });
+
+  it("persists cancellation and idempotent agent sends", async () => {
+    const first = await store.enqueue({
+      sender: { kind: "bot", botId: "chief" },
+      recipientBotIds: ["sales-outbound"],
+      text: "Prepare a report",
+      idempotencyKey: "thread:turn:call",
+    });
+    const duplicate = await store.enqueue({
+      sender: { kind: "bot", botId: "chief" },
+      recipientBotIds: ["sales-outbound"],
+      text: "Prepare a report",
+      idempotencyKey: "thread:turn:call",
+    });
+    expect(duplicate).toEqual(first);
+
+    await store.cancel("sales-outbound", first.deliveries[0].id);
+    const restored = openMailboxStore(join(root, "user-data"), join(root, "Shared"));
+    await restored.initialize();
+    expect(restored.listQueue("sales-outbound")).toMatchObject({
+      deliveries: [{ status: "cancelled" }],
+    });
+  });
+
+  it("keeps enqueue idempotent in SQLite", async () => {
+    const original = join(root, "retry.txt");
+    await writeFile(original, "retry me\n");
+    const [draft] = await store.prepareAttachments([original]);
+    const first = await store.enqueue({
+      sender: { kind: "bot", botId: "planner" },
+      recipientBotIds: ["chief"],
+      text: "",
+      draftIds: [draft.id],
+      idempotencyKey: "session:turn:call",
+    });
+    const second = await store.enqueue({
+      sender: { kind: "bot", botId: "planner" },
+      recipientBotIds: ["chief"],
+      text: "ignored duplicate",
+      idempotencyKey: "session:turn:call",
+    });
+    expect(second).toEqual(first);
+    expect(store.listQueue("chief").deliveries).toHaveLength(1);
+  });
+
+  it("does not read or overwrite legacy mailbox files after SQLite activation", async () => {
+    const statePath = join(root, "user-data", "mailbox.json");
+    const unsupported = '{"version":999,"messages":[{"important":true}]}\n';
+    await writeFile(statePath, unsupported);
+
+    const restored = openMailboxStore(join(root, "user-data"), join(root, "Shared"));
+    await expect(restored.initialize()).resolves.toBeUndefined();
+    await expect(readFile(statePath, "utf8")).resolves.toBe(unsupported);
+  });
+
+  it("persists one reaction per actor without overwriting other actors", async () => {
+    const receipt = await store.enqueue({
+      sender: { kind: "user" },
+      recipientBotIds: ["chief"],
+      text: "Yes, continue",
+      replyToMessageId: "assistant-1",
+    });
+    const deliveryId = receipt.deliveries[0].id;
+    expect(store.conversationMessages("chief")[0]).toMatchObject({
+      id: deliveryId,
+      replyToMessageId: "assistant-1",
+    });
+
+    await store.setReaction("chief", "assistant-1", { kind: "user" }, "❤️");
+    await store.setReaction("chief", "assistant-1", { kind: "bot", botId: "chief" }, "🎉");
+    const restored = openMailboxStore(join(root, "user-data"), join(root, "Shared"));
+    await restored.initialize();
+    expect(restored.reactionFor("chief", "assistant-1")).toBe("❤️");
+    expect(restored.reactionFor("chief", "assistant-1", { kind: "bot", botId: "chief" })).toBe("🎉");
+    expect(restored.reactionsFor("chief").get("assistant-1")).toEqual([
+      { emoji: "❤️", actor: { kind: "user" } },
+      { emoji: "🎉", actor: { kind: "bot", botId: "chief" } },
+    ]);
+    await restored.setReaction("chief", "assistant-1", { kind: "user" }, null);
+    expect(restored.reactionFor("chief", "assistant-1")).toBeNull();
+    expect(restored.reactionFor("chief", "assistant-1", { kind: "bot", botId: "chief" })).toBe("🎉");
+  });
+
+  it("tracks the initiating bot through a reply chain and detects explicit replies", async () => {
+    const rootMessage = await store.enqueue({
+      sender: { kind: "bot", botId: "researcher" },
+      recipientBotIds: ["weather"],
+      text: "Check tomorrow's weather.",
+    });
+    const weatherQuestion = await store.enqueue({
+      sender: { kind: "bot", botId: "weather" },
+      recipientBotIds: ["researcher"],
+      text: "Which city?",
+      replyToMessageId: rootMessage.messageId,
+    });
+    const locationReply = await store.enqueue({
+      sender: { kind: "bot", botId: "researcher" },
+      recipientBotIds: ["weather"],
+      text: "Kraków.",
+      replyToMessageId: weatherQuestion.messageId,
+    });
+
+    expect(store.chainOriginBotId(locationReply.messageId)).toBe("researcher");
+    expect(store.hasReplyFrom("weather", locationReply.messageId)).toBe(false);
+    await store.enqueue({
+      sender: { kind: "bot", botId: "weather" },
+      recipientBotIds: ["researcher"],
+      text: "It will be sunny.",
+      replyToMessageId: locationReply.messageId,
+    });
+    expect(store.hasReplyFrom("weather", locationReply.messageId)).toBe(true);
+    await store.enqueue({
+      sender: { kind: "bot", botId: "weather" },
+      recipientBotIds: ["researcher"],
+      text: "A second explicit update.",
+      idempotencyKey: "thread-weather:turn-weather:call-1",
+    });
+    expect(store.hasBotMessageFromTurnTo("weather", "turn-weather", "researcher")).toBe(true);
+    expect(store.hasBotMessageFromTurnTo("weather", "turn-weather", "other-agent")).toBe(false);
+  });
+
+  it("rejects directories and oversized recipient lists", async () => {
+    const directory = join(root, "folder");
+    await mkdir(directory);
+    await expect(store.prepareAttachments([directory])).rejects.toThrow("regular files");
+    await expect(
+      store.enqueue({
+        sender: { kind: "user" },
+        recipientBotIds: Array.from({ length: 33 }, (_, index) => `bot-${index}`),
+        text: "Too many",
+      }),
+    ).rejects.toThrow("32 recipients");
+    await expect(
+      store.enqueue({
+        sender: { kind: "user" },
+        recipientBotIds: ["x".repeat(INPUT_LIMITS.identifier + 1)],
+        text: "Invalid recipient",
+      }),
+    ).rejects.toThrow("recipients isn't valid");
+    await expect(
+      store.prepareImportedAttachments(
+        [],
+        [
+          {
+            name: "x".repeat(INPUT_LIMITS.attachmentName + 1),
+            mimeType: "image/png",
+            bytes: new Uint8Array(),
+          },
+        ],
+      ),
+    ).rejects.toThrow("metadata exceeds the size limit");
+  });
+
+  it("accepts whitelisted context files and rejects unsupported binaries", async () => {
+    const paths = ["brief.pdf", "notes.txt", "README.md", "requirements.docx"].map((name) => join(root, name));
+    await Promise.all(paths.map((path) => writeFile(path, "fixture")));
+
+    await expect(store.prepareAttachments(paths)).resolves.toMatchObject([
+      { name: "brief.pdf", mimeType: "application/pdf", previewKind: "pdf" },
+      { name: "notes.txt", mimeType: "text/plain", previewKind: "text" },
+      { name: "README.md", mimeType: "text/markdown", previewKind: "text" },
+      {
+        name: "requirements.docx",
+        mimeType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        previewKind: "none",
+      },
+    ]);
+
+    const archive = join(root, "bundle.zip");
+    await writeFile(archive, "fixture");
+    await expect(store.prepareAttachments([archive])).rejects.toThrow("bundle.zip is not supported");
+    await expect(
+      store.prepareImportedAttachments(
+        [],
+        [{ name: "installer.exe", mimeType: "application/octet-stream", bytes: new Uint8Array([1]) }],
+      ),
+    ).rejects.toThrow("installer.exe is not supported");
+  });
+
+  it("imports pathless image bytes and accepts an attachment-only user message", async () => {
+    const [draft] = await store.prepareImportedAttachments(
+      [],
+      [
+        {
+          name: "clipboard.png",
+          mimeType: "image/png",
+          bytes: new Uint8Array([137, 80, 78, 71]),
+        },
+      ],
+    );
+    expect(draft).toMatchObject({
+      kind: "image",
+      mimeType: "image/png",
+      previewKind: "image",
+    });
+    const receipt = await store.enqueue({
+      sender: { kind: "user" },
+      recipientBotIds: ["chief"],
+      text: "",
+      draftIds: [draft.id],
+    });
+    expect(store.getDelivery(receipt.deliveries[0].id)?.delivery).toMatchObject({
+      text: "",
+      attachments: [{ name: "clipboard.png" }],
+    });
+  });
+
+  it("persists generated image attachments and resolves them after restart", async () => {
+    const attachment = await store.storeGeneratedAttachment({
+      bytes: new Uint8Array([137, 80, 78, 71, 13, 10, 26, 10]),
+      name: "generated-image.png",
+      mimeType: "image/png",
+    });
+
+    expect(attachment).toMatchObject({
+      kind: "image",
+      mimeType: "image/png",
+      previewKind: "image",
+      previewUrl: `lunabot-attachment://file/${attachment.id}`,
+    });
+    await expect(store.resolveAttachment(attachment.id)).resolves.toMatchObject({
+      mimeType: "image/png",
+    });
+
+    const restored = openMailboxStore(join(root, "user-data"), join(root, "Shared"));
+    await restored.initialize();
+    const resolved = await restored.resolveAttachment(attachment.id);
+    expect(resolved?.mimeType).toBe("image/png");
+    await expect(readFile(resolved?.path ?? "")).resolves.toEqual(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]));
+  });
+
+  it("deletes generated attachments owned by a deleted bot", async () => {
+    const attachment = await store.storeGeneratedAttachment({
+      bytes: new Uint8Array([1, 2, 3]),
+      name: "generated.bin",
+      ownerBotId: "chief",
+      ownerThreadId: "thread-chief",
+    });
+
+    await expect(store.resolveAttachment(attachment.id)).resolves.toBeTruthy();
+    await store.deleteBotData("chief");
+
+    await expect(store.resolveAttachment(attachment.id)).resolves.toBeNull();
+    await expect(store.listExportAttachments()).resolves.toEqual([]);
+  });
+
+  it("cleans unrecoverable attachment drafts when a new app session starts", async () => {
+    const source = join(root, "abandoned.txt");
+    await writeFile(source, "abandoned");
+    const [draft] = await store.prepareAttachments([source]);
+    expect(draft).toBeDefined();
+
+    const restored = openMailboxStore(join(root, "user-data"), join(root, "Shared"));
+    await restored.initialize();
+
+    await expect(restored.resolveAttachment(draft.id)).resolves.toBeNull();
+  });
+
+  it("removes deleted bot deliveries while preserving messages visible to other bots", async () => {
+    await store.enqueue({
+      sender: { kind: "user" },
+      recipientBotIds: ["chief"],
+      text: "Private to Chief",
+    });
+    await store.enqueue({
+      sender: { kind: "bot", botId: "chief" },
+      recipientBotIds: ["sales-outbound"],
+      text: "Keep this for Sales",
+    });
+
+    await store.deleteBotData("chief");
+
+    expect(store.listQueue("chief").deliveries).toEqual([]);
+    expect(store.conversationMessages("chief").map((message) => message.text)).not.toContain("Private to Chief");
+    expect(store.conversationMessages("sales-outbound")).toEqual([
+      expect.objectContaining({ text: "Keep this for Sales", senderBotId: "chief" }),
+    ]);
+  });
+
+  it.skipIf(!canCreateSymlinks())(
+    "rejects managed attachments replaced by symlinks outside the transfer root (needs symlink privilege)",
+    async () => {
+      const source = join(root, "inside.txt");
+      const outside = join(root, "outside.txt");
+      await writeFile(source, "original");
+      await writeFile(outside, "secret");
+      const [draft] = await store.prepareAttachments([source]);
+      const receipt = await store.enqueue({
+        sender: { kind: "user" },
+        recipientBotIds: ["chief"],
+        text: "Review",
+        draftIds: [draft.id],
+      });
+      const attachment = store.getDelivery(receipt.deliveries[0].id)?.managedAttachments[0];
+      expect(attachment).toBeDefined();
+      await rm(attachment?.path ?? "missing");
+      await symlink(outside, attachment?.path ?? "missing");
+
+      await expect(store.resolveAttachment(attachment?.id ?? "")).resolves.toBeNull();
+      await expect(store.listExportAttachments()).resolves.toEqual([]);
+    },
+  );
+
+  it("keeps the persisted MIME type as the single source for attachment serving", async () => {
+    const [draft] = await store.prepareImportedAttachments(
+      [],
+      [
+        {
+          name: "clipboard.txt",
+          mimeType: "image/png",
+          bytes: new Uint8Array([137, 80, 78, 71]),
+        },
+      ],
+    );
+
+    await expect(store.resolveAttachment(draft.id)).resolves.toMatchObject({
+      mimeType: "image/png",
+    });
+  });
+
+  it("reconstructs persistent outgoing and incoming exchanges with live delivery states", async () => {
+    const receipt = await store.enqueue({
+      sender: { kind: "bot", botId: "chief" },
+      recipientBotIds: ["sales-outbound", "inbox-manager"],
+      text: "Prepare your reports",
+      replyToMessageId: "previous-message",
+    });
+    await store.markStarting(receipt.deliveries[0].id);
+    await store.markRunning(receipt.deliveries[0].id, "turn-sales");
+
+    const outgoing = store.conversationMessages("chief")[0];
+    expect(outgoing).toMatchObject({
+      id: `outbox-${receipt.messageId}`,
+      exchange: {
+        direction: "outgoing",
+        recipientBotIds: ["sales-outbound", "inbox-manager"],
+        replyToMessageId: "previous-message",
+        deliveries: [{ status: "running" }, { status: "queued" }],
+      },
+    });
+    expect(store.conversationMessages("sales-outbound")[0]).toMatchObject({
+      author: "agent",
+      senderBotId: "chief",
+      exchange: { direction: "incoming" },
+    });
+
+    const restored = openMailboxStore(join(root, "user-data"), join(root, "Shared"));
+    await restored.initialize();
+    expect(restored.conversationMessages("chief")[0]?.exchange?.deliveries).toEqual(
+      expect.arrayContaining([expect.objectContaining({ status: "running" })]),
+    );
+  });
+
+  it("persists queue order and edits a queued message copy-on-write", async () => {
+    const original = join(root, "original.txt");
+    const replacement = join(root, "replacement.txt");
+    await writeFile(original, "original");
+    await writeFile(replacement, "replacement");
+    const [originalDraft] = await store.prepareAttachments([original]);
+    const first = await store.enqueue({
+      sender: { kind: "user" },
+      recipientBotIds: ["chief"],
+      text: "Keep this message",
+      draftIds: [originalDraft.id],
+    });
+    const second = await store.enqueue({
+      sender: { kind: "user" },
+      recipientBotIds: ["chief"],
+      text: "Move me first",
+    });
+    const firstDeliveryId = first.deliveries[0].id;
+    const secondDeliveryId = second.deliveries[0].id;
+    const before = store.getDelivery(firstDeliveryId);
+    const originalAttachmentId = before?.delivery.attachments[0]?.id;
+    expect(originalAttachmentId).toBeDefined();
+
+    await store.reorderQueue("chief", [secondDeliveryId, firstDeliveryId]);
+    const [replacementDraft] = await store.prepareAttachments([replacement]);
+    await store.updateQueuedMessage(
+      "chief",
+      firstDeliveryId,
+      "Edited in place",
+      [originalAttachmentId ?? ""],
+      [replacementDraft.id],
+    );
+
+    const edited = store.getDelivery(firstDeliveryId);
+    expect(edited?.delivery).toMatchObject({
+      id: firstDeliveryId,
+      messageId: first.messageId,
+      text: "Edited in place",
+      position: 2,
+      status: "queued",
+    });
+    expect(edited?.delivery.attachments).toHaveLength(2);
+    expect(edited?.delivery.attachments[0]?.id).toBe(originalAttachmentId);
+
+    const restored = openMailboxStore(join(root, "user-data"), join(root, "Shared"));
+    await restored.initialize();
+    expect(restored.listQueue("chief").deliveries).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ id: secondDeliveryId, position: 1 }),
+        expect.objectContaining({ id: firstDeliveryId, position: 2 }),
+      ]),
+    );
+    expect(restored.getDelivery(firstDeliveryId)?.delivery).toMatchObject({
+      messageId: first.messageId,
+      text: "Edited in place",
+      position: 2,
+    });
+  });
+
+  it("rejects queue edits and reorders for non-queued deliveries", async () => {
+    const receipt = await store.enqueue({
+      sender: { kind: "user" },
+      recipientBotIds: ["chief"],
+      text: "Already running",
+    });
+    const deliveryId = receipt.deliveries[0].id;
+    await store.markStarting(deliveryId);
+
+    await expect(store.updateQueuedMessage("chief", deliveryId, "Changed", [], [])).rejects.toThrow(
+      "Only messages still waiting in the queue can be edited",
+    );
+    await expect(store.reorderQueue("chief", [deliveryId])).rejects.toThrow(
+      "The queue changed while you were reordering",
+    );
+  });
+});

@@ -1,0 +1,21 @@
+<svg width="960" height="600" viewBox="0 0 960 600" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <title>Example sign-in page</title>
+  <rect width="960" height="600" fill="#ECE9F7"/>
+  <circle cx="150" cy="120" r="2" fill="#B9B0E0"/>
+  <circle cx="820" cy="90" r="2.5" fill="#B9B0E0"/>
+  <circle cx="860" cy="470" r="2" fill="#B9B0E0"/>
+  <circle cx="110" cy="440" r="2.5" fill="#B9B0E0"/>
+  <rect x="240" y="70" width="480" height="460" rx="28" fill="#FFFFFF" stroke="#D5CFEC" stroke-width="2"/>
+  <circle cx="480" cy="152" r="34" fill="#2A2358"/>
+  <path d="M492 128a26 26 0 1 0 0 48a20 20 0 0 1 0-48z" fill="#E4E0FA"/>
+  <rect x="400" y="212" width="160" height="16" rx="8" fill="#2A2358"/>
+  <rect x="360" y="242" width="240" height="10" rx="5" fill="#C9C3E6"/>
+  <rect x="300" y="290" width="360" height="52" rx="26" fill="#F7F5FD" stroke="#D5CFEC" stroke-width="2"/>
+  <circle cx="330" cy="316" r="9" fill="#C9C3E6"/>
+  <rect x="352" y="311" width="120" height="10" rx="5" fill="#B9B0E0"/>
+  <rect x="300" y="358" width="360" height="52" rx="26" fill="#F7F5FD" stroke="#D5CFEC" stroke-width="2"/>
+  <circle cx="330" cy="384" r="9" fill="#C9C3E6"/>
+  <rect x="352" y="379" width="150" height="10" rx="5" fill="#B9B0E0"/>
+  <rect x="300" y="438" width="360" height="48" rx="24" fill="#4B3FA8"/>
+  <rect x="440" y="457" width="80" height="10" rx="5" fill="#FFFFFF"/>
+</svg>

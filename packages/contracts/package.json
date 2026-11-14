@@ -1,0 +1,23 @@
+{
+  "name": "@lunabot/contracts",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    "./attachment-files": "./src/attachment-files.ts",
+    "./attachment-references": "./src/attachment-references.ts",
+    "./avatar-images": "./src/avatar-images.ts",
+    "./input-limits": "./src/input-limits.ts",
+    "./ipc": "./src/ipc.ts",
+    "./runtime-values": "./src/runtime-values.ts",
+    "./validation": "./src/validation.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "test": "vitest run --config vitest.config.ts src"
+  },
+  "devDependencies": {
+    "typescript": "7.0.2",
+    "vitest": "4.1.10"
+  }
+}

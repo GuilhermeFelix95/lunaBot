@@ -1,0 +1,188 @@
+import type { AttachmentSummary, BotSummary, ConversationMessage, ConversationSnapshot } from "@lunabot/contracts/ipc";
+import type { MockLunaBotOptions } from "./mock-lunabot";
+
+const LANDING_PREVIEW_NOW = "2026-08-21T10:00:00.000Z";
+
+const LANDING_PREVIEW_BOTS: BotSummary[] = [
+  {
+    id: "chief",
+    provider: "codex",
+    name: "Chief",
+    title: "Chief of staff",
+    description: "Coordinates priorities, decisions, and handoffs across the team.",
+    notifications: "all",
+    model: "gpt-5.6-luna",
+    reasoningEffort: "low",
+    threadId: "thread-chief",
+    workspacePath: "/mock/LunaBot/Bots/chief",
+    preview: "The launch plan is ready with owners, evidence, and next actions.",
+    updatedAt: LANDING_PREVIEW_NOW,
+    avatarSeed: "chief",
+    avatarHue: 245,
+    avatarUrl: null,
+  },
+  {
+    id: "research",
+    provider: "codex",
+    name: "Research",
+    title: "Research partner",
+    description: "Finds reliable sources and turns them into concise briefs.",
+    notifications: "all",
+    model: "gpt-5.6-luna",
+    reasoningEffort: "low",
+    threadId: "thread-research",
+    workspacePath: "/mock/LunaBot/Bots/research",
+    preview: "The source review and evidence map are complete.",
+    updatedAt: "2026-08-21T09:48:00.000Z",
+    avatarSeed: "research",
+    avatarHue: 185,
+    avatarUrl: null,
+  },
+  {
+    id: "builder",
+    provider: "codex",
+    name: "Builder",
+    title: "Product engineer",
+    description: "Builds product changes and records clear technical decisions.",
+    notifications: "all",
+    model: "gpt-5.6-luna",
+    reasoningEffort: "low",
+    threadId: "thread-builder",
+    workspacePath: "/mock/LunaBot/Bots/builder",
+    preview: "The implementation checklist includes tests and rollback steps.",
+    updatedAt: "2026-08-21T09:36:00.000Z",
+    avatarSeed: "builder",
+    avatarHue: 30,
+    avatarUrl: null,
+  },
+  {
+    id: "launch",
+    provider: "codex",
+    name: "Launch",
+    title: "Go-to-market lead",
+    description: "Prepares launch assets, messaging, and release checklists.",
+    notifications: "all",
+    model: "gpt-5.6-luna",
+    reasoningEffort: "low",
+    threadId: "thread-launch",
+    workspacePath: "/mock/LunaBot/Bots/launch",
+    preview: "The launch brief is ready for final review.",
+    updatedAt: "2026-08-21T09:24:00.000Z",
+    avatarSeed: "launch",
+    avatarHue: 320,
+    avatarUrl: null,
+  },
+];
+
+export const LANDING_PREVIEW_ATTACHMENTS: AttachmentSummary[] = [
+  {
+    id: "landing-launch-brief",
+    name: "launch-brief.md",
+    size: 2_048,
+    kind: "file",
+    mimeType: "text/markdown",
+    previewKind: "text",
+    previewUrl: null,
+  },
+  {
+    id: "landing-launch-metrics",
+    name: "launch-metrics.csv",
+    size: 1_024,
+    kind: "file",
+    mimeType: "text/csv",
+    previewKind: "text",
+    previewUrl: null,
+  },
+];
+
+const LANDING_PREVIEW_CHIEF_MESSAGES: ConversationMessage[] = [
+  {
+    id: "landing-chief-request",
+    author: "user",
+    source: "user",
+    text: "Prepare the launch plan, tag @Research, and keep every decision traceable.",
+    createdAt: "2026-08-21T09:42:00.000Z",
+    status: "completed",
+  },
+  {
+    id: "landing-chief-plan",
+    author: "assistant",
+    source: "assistant",
+    text: [
+      "## Launch plan",
+      "",
+      "I asked @Research to verify the evidence and @Builder to check the rollout path.",
+      "",
+      "| Workstream | Owner | Status |",
+      "| --- | --- | --- |",
+      "| Product QA | @Builder | Ready |",
+      "| Evidence | @Research | In review |",
+      "| Release | @Launch | Ready |",
+      "",
+      "Next: confirm the rollback owner, then publish the release note.",
+    ].join("\n"),
+    createdAt: "2026-08-21T09:43:00.000Z",
+    status: "completed",
+    attachments: LANDING_PREVIEW_ATTACHMENTS,
+    reaction: "\u2705",
+  },
+  {
+    id: "landing-chief-exchange",
+    author: "system",
+    source: "system",
+    text: "",
+    createdAt: "2026-08-21T09:44:00.000Z",
+    status: "completed",
+    exchange: {
+      direction: "outgoing",
+      messageId: "landing-chief-exchange",
+      senderBotId: "chief",
+      recipientBotIds: ["research", "builder"],
+      replyToMessageId: "landing-chief-plan",
+      deliveries: [
+        {
+          id: "landing-delivery-research",
+          recipientBotId: "research",
+          status: "completed",
+          position: null,
+          error: null,
+        },
+        {
+          id: "landing-delivery-builder",
+          recipientBotId: "builder",
+          status: "completed",
+          position: null,
+          error: null,
+        },
+      ],
+    },
+  },
+  {
+    id: "landing-chief-ready",
+    author: "assistant",
+    source: "assistant",
+    text: "Research verified seven of eight claims. Builder added the test and rollback steps. The final review is ready.",
+    createdAt: "2026-08-21T09:45:00.000Z",
+    status: "completed",
+  },
+];
+
+const LANDING_PREVIEW_SNAPSHOTS: Record<string, ConversationSnapshot> = Object.fromEntries(
+  LANDING_PREVIEW_BOTS.map((bot) => [
+    bot.id,
+    {
+      botId: bot.id,
+      threadId: bot.threadId,
+      activeTurnId: null,
+      revision: 1,
+      messages: bot.id === "chief" ? LANDING_PREVIEW_CHIEF_MESSAGES : [],
+    },
+  ]),
+);
+
+export const LANDING_PREVIEW_OPTIONS = {
+  bots: LANDING_PREVIEW_BOTS,
+  snapshots: LANDING_PREVIEW_SNAPSHOTS,
+  browserTabs: [],
+  browserControlState: { sessions: [] },
+} satisfies MockLunaBotOptions;

@@ -1,0 +1,355 @@
+.computer-use-settings {
+  display: grid;
+  gap: var(--lunabot-space-6);
+}
+
+.computer-use-card:is(.ui-item-group) {
+  overflow: hidden;
+}
+
+.computer-use-helper-media,
+.computer-use-permission-icon {
+  display: grid;
+  place-items: center;
+  flex: 0 0 auto;
+}
+
+.computer-use-helper-media {
+  width: 34px;
+  height: 34px;
+  border-radius: var(--lunabot-radius-md);
+  background: var(--lunabot-bg-control);
+}
+
+.computer-use-helper-media img {
+  width: 30px;
+  height: 30px;
+  object-fit: contain;
+}
+
+.computer-use-fallback-icon,
+.computer-use-permission-icon svg {
+  width: 16px;
+  height: 16px;
+  color: var(--lunabot-text-secondary);
+}
+
+.computer-use-permission-icon {
+  width: 30px;
+  height: 30px;
+  border-radius: var(--lunabot-radius-md);
+  background: var(--lunabot-settings-accent-soft);
+}
+
+.computer-use-permission-icon svg {
+  color: var(--lunabot-settings-accent-text);
+}
+
+.computer-use-helper-row .z-badge {
+  gap: var(--lunabot-space-1);
+}
+
+.computer-use-helper-row .z-badge svg {
+  width: 13px;
+  height: 13px;
+}
+
+.computer-use-alert {
+  margin-top: var(--lunabot-space-3);
+}
+
+.computer-use-settings > .computer-use-alert:first-child,
+.computer-use-compact > .computer-use-alert:first-child {
+  margin-top: 0;
+}
+
+.computer-use-loading .computer-use-row {
+  min-height: 60px;
+}
+
+.computer-use-skeleton-icon {
+  width: 30px;
+  height: 30px;
+  border-radius: var(--lunabot-radius-md);
+}
+
+.computer-use-skeleton-title {
+  width: 128px;
+  height: 12px;
+}
+
+.computer-use-skeleton-description {
+  width: min(220px, 70%);
+  height: 10px;
+  margin-top: var(--lunabot-space-2);
+}
+
+.computer-use-compact {
+  width: min(100%, 430px);
+  margin-top: var(--lunabot-space-4);
+  text-align: left;
+}
+
+.computer-use-compact-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--lunabot-space-3);
+  margin: 0 var(--lunabot-space-1) var(--lunabot-space-3);
+}
+
+.computer-use-compact-header h2 {
+  margin: 0;
+  color: var(--lunabot-text-muted);
+  font-size: var(--lunabot-text-xs);
+  font-weight: var(--lunabot-weight-semibold);
+  letter-spacing: 0.08em;
+  line-height: var(--lunabot-leading-xs);
+  text-transform: uppercase;
+}
+
+.computer-use-compact-header p {
+  margin: var(--lunabot-space-1) 0 0;
+  color: var(--lunabot-text-secondary);
+  font-size: var(--lunabot-text-sm);
+  line-height: var(--lunabot-leading-sm);
+}
+
+.computer-use-compact-header > span {
+  flex: 0 0 auto;
+  padding: var(--lunabot-space-0-5) var(--lunabot-space-2);
+  border-radius: var(--lunabot-radius-pill);
+  background: var(--lunabot-bg-control);
+  color: var(--lunabot-text-muted);
+  font-size: var(--lunabot-text-xs);
+  line-height: var(--lunabot-leading-sm);
+}
+
+.computer-use-compact .computer-use-card {
+  display: grid;
+  gap: var(--lunabot-space-2);
+  border: 0;
+  background: transparent;
+}
+
+.computer-use-compact .computer-use-row {
+  min-height: 0;
+  padding: var(--lunabot-space-3) var(--lunabot-space-4);
+  border: 1px solid var(--lunabot-border);
+  border-radius: var(--lunabot-radius-lg);
+  background: var(--lunabot-bg-sidebar);
+  transition:
+    background-color var(--lunabot-duration-normal) var(--lunabot-ease-out),
+    border-color var(--lunabot-duration-normal) var(--lunabot-ease-out);
+}
+
+.computer-use-compact .computer-use-row:hover {
+  border-color: var(--lunabot-border-strong);
+  background: var(--lunabot-bg-control);
+}
+
+.computer-use-compact .computer-use-permission-icon {
+  display: inline-flex;
+  width: 32px;
+  height: 32px;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--lunabot-radius-md);
+  background: var(--lunabot-bg-control);
+  color: var(--lunabot-text-secondary);
+}
+
+.computer-use-compact .computer-use-permission-icon svg {
+  width: var(--lunabot-icon-md);
+  height: var(--lunabot-icon-md);
+}
+
+.computer-use-compact .ui-item-title {
+  color: var(--lunabot-text-primary);
+  font-size: var(--lunabot-text-md);
+  font-weight: var(--lunabot-weight-semibold);
+}
+
+.computer-use-compact .ui-item-description {
+  color: var(--lunabot-text-muted);
+  font-size: var(--lunabot-text-sm);
+}
+
+.computer-use-setup-surface {
+  min-height: 300px;
+  display: grid;
+  grid-template-rows: auto 1fr auto;
+  gap: var(--lunabot-space-3);
+  box-sizing: border-box;
+  padding: 44px var(--lunabot-space-4) var(--lunabot-space-4);
+  background: var(--lunabot-bg-sidebar);
+  color: var(--lunabot-text-primary);
+  -webkit-app-region: drag;
+}
+
+.computer-use-setup-header {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--lunabot-space-3);
+}
+
+.computer-use-setup-permission-icon {
+  width: 32px;
+  height: 32px;
+  display: grid;
+  place-items: center;
+  flex: 0 0 auto;
+  border-radius: var(--lunabot-radius-md);
+  background: var(--lunabot-settings-accent-soft);
+  color: var(--lunabot-settings-accent-text);
+}
+
+.computer-use-setup-permission-icon svg {
+  width: 16px;
+  height: 16px;
+}
+
+.computer-use-setup-header h1 {
+  margin: 0;
+  color: var(--lunabot-text-primary);
+  font-size: var(--lunabot-text-xl);
+  font-weight: var(--lunabot-weight-medium);
+  line-height: var(--lunabot-leading-xl);
+}
+
+.computer-use-setup-header p,
+.computer-use-setup-footer p {
+  margin: var(--lunabot-space-0-5) 0 0;
+  color: var(--lunabot-text-muted);
+  font-size: var(--lunabot-text-xs);
+  line-height: var(--lunabot-leading-sm);
+}
+
+.computer-use-drag-card {
+  position: relative;
+  width: 210px;
+  min-height: 94px;
+  display: grid;
+  justify-items: center;
+  align-content: center;
+  gap: var(--lunabot-space-1);
+  align-self: center;
+  justify-self: center;
+  box-sizing: border-box;
+  border: 1px solid var(--lunabot-border-strong);
+  border-radius: var(--lunabot-radius-lg);
+  background: var(--lunabot-bg-control);
+  color: var(--lunabot-text-primary);
+  cursor: grab;
+  -webkit-app-region: no-drag;
+  transition:
+    background var(--lunabot-duration-fast) var(--lunabot-ease-out),
+    border-color var(--lunabot-duration-fast) var(--lunabot-ease-out),
+    transform var(--lunabot-duration-fast) var(--lunabot-ease-out);
+}
+
+.computer-use-drag-card:hover {
+  border-color: var(--lunabot-settings-accent-strong);
+  background: var(--lunabot-bg-control-hover);
+  transform: translateY(-1px);
+}
+
+.computer-use-drag-card:active,
+.computer-use-drag-card.is-dragging {
+  cursor: grabbing;
+  transform: translateY(0) scale(0.98);
+}
+
+.computer-use-drag-handle {
+  position: absolute;
+  top: var(--lunabot-space-2);
+  right: var(--lunabot-space-2);
+  color: var(--lunabot-text-muted);
+}
+
+.computer-use-drag-handle svg {
+  width: 15px;
+  height: 15px;
+}
+
+.computer-use-drag-icon {
+  width: 36px;
+  height: 36px;
+  display: grid;
+  place-items: center;
+}
+
+.computer-use-drag-icon img {
+  width: 36px;
+  height: 36px;
+  object-fit: contain;
+}
+
+.computer-use-drag-icon svg {
+  width: 24px;
+  height: 24px;
+  color: var(--lunabot-text-secondary);
+}
+
+.computer-use-drag-card strong {
+  font-size: var(--lunabot-text-sm);
+  font-weight: var(--lunabot-weight-medium);
+}
+
+.computer-use-drag-card > span:last-child {
+  color: var(--lunabot-text-muted);
+  font-size: var(--lunabot-text-xs);
+}
+
+.computer-use-setup-footer {
+  display: grid;
+  gap: var(--lunabot-space-2);
+}
+
+.computer-use-setup-footer > div {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--lunabot-space-2);
+}
+
+.computer-use-setup-footer .ui-button,
+.computer-use-drag-card,
+.computer-use-setup-unavailable {
+  -webkit-app-region: no-drag;
+}
+
+.computer-use-setup-unavailable {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--lunabot-space-2);
+  color: var(--lunabot-warning);
+  font-size: var(--lunabot-text-sm);
+  text-align: center;
+}
+
+.computer-use-setup-unavailable svg {
+  width: 16px;
+  height: 16px;
+  flex: 0 0 auto;
+}
+
+.computer-use-setup-error {
+  margin: 0;
+  color: var(--lunabot-danger);
+  font-size: var(--lunabot-text-xs);
+  line-height: var(--lunabot-leading-sm);
+  text-align: center;
+}
+
+@media (max-width: 640px) {
+  .computer-use-row.ui-item {
+    align-items: flex-start;
+  }
+
+  .computer-use-row .ui-item-actions {
+    width: auto;
+    padding-top: var(--lunabot-space-1);
+  }
+}

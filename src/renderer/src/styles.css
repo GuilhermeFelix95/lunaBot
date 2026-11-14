@@ -1,0 +1,652 @@
+@import "@fontsource-variable/inter";
+@import "@fontsource-variable/inter/wght-italic.css";
+@import "@fontsource-variable/instrument-sans";
+@import "@fontsource/instrument-serif/400.css";
+@import "@fontsource/dm-mono/400.css";
+@import "@fontsource/dm-mono/500.css";
+@import "@fontsource-variable/newsreader";
+@import "@fontsource/ibm-plex-sans/400.css";
+@import "@fontsource/ibm-plex-sans/500.css";
+@import "@fontsource/ibm-plex-sans/600.css";
+@import "@fontsource/ibm-plex-mono/400.css";
+@import "@fontsource/ibm-plex-mono/500.css";
+@import "@fontsource-variable/hanken-grotesk";
+@import "@fontsource-variable/jetbrains-mono";
+@import "tailwindcss";
+@import "@lunabot/brand/logo.css";
+@import "./styles/primitives.css";
+@import "./styles/transitions.css";
+@import "./styles/sliding-tabs.css";
+@import "./styles/action-menu.css";
+@import "./styles/dynamic-island.css";
+@import "./styles/dynamic-island-surface.css";
+@import "./styles/base.css";
+@import "./styles/auth.css";
+@import "./styles/first-bot-setup.css";
+@import "./styles/avatar.css";
+@import "./styles/app-shell.css";
+@import "./styles/account-update-island.css";
+@import "./styles/conversation.css";
+@import "./styles/settings-modal.css";
+@import "./styles/computer-use.css";
+
+/*
+ * Structural tokens: identical in every theme.
+ * Palette, fonts and radius scale live in the theme blocks below; the
+ * derived tokens are built from the theme's base variables.
+ */
+:root {
+  --lunabot-text-nano: 7px;
+  --lunabot-text-micro: 8px;
+  --lunabot-text-2xs: 10px;
+  --lunabot-text-xs: 11px;
+  --lunabot-text-sm: 12px;
+  --lunabot-text-md: 13px;
+  --lunabot-text-lg: 14px;
+  --lunabot-text-base: 15px;
+  --lunabot-text-xl: 16px;
+  --lunabot-text-settings-title: 18px;
+  --lunabot-text-2xl: 20px;
+  --lunabot-text-3xl: 24px;
+  --lunabot-text-4xl: 28px;
+  --lunabot-text-5xl: 40px;
+  --lunabot-text-display: 32px;
+  --lunabot-leading-xs: 14px;
+  --lunabot-leading-sm: 16px;
+  --lunabot-leading-md: 18px;
+  --lunabot-leading-lg: 20px;
+  --lunabot-leading-xl: 22px;
+  --lunabot-leading-settings-title: 24px;
+  --lunabot-leading-2xl: 26px;
+  --lunabot-leading-display: 38px;
+  --lunabot-weight-regular: 400;
+  --lunabot-weight-medium: 500;
+  --lunabot-weight-semibold: 600;
+  --lunabot-weight-bold: 700;
+  --lunabot-tracking-tight: -0.02em;
+  --lunabot-tracking-normal: 0;
+  --lunabot-tracking-wide: 0.02em;
+  --lunabot-space-0-5: 2px;
+  --lunabot-space-1: 4px;
+  --lunabot-space-1-5: 6px;
+  --lunabot-space-2: 8px;
+  --lunabot-space-3: 12px;
+  --lunabot-space-4: 16px;
+  --lunabot-space-5: 20px;
+  --lunabot-space-6: 24px;
+  --lunabot-space-8: 32px;
+  --lunabot-scrollbar-size: 8px;
+  /* Each radius is capped by --lunabot-radius-scale (theme block): Quadrante caps every radius at 2px. */
+  --lunabot-radius-xs: min(4px, var(--lunabot-radius-scale));
+  --lunabot-radius-sm: min(6px, var(--lunabot-radius-scale));
+  --lunabot-radius-md: min(8px, var(--lunabot-radius-scale));
+  --lunabot-radius-lg: min(12px, var(--lunabot-radius-scale));
+  --lunabot-radius-dialog: min(14px, var(--lunabot-radius-scale));
+  --lunabot-radius-xl: min(20px, var(--lunabot-radius-scale));
+  --lunabot-radius-bubble: min(22px, var(--lunabot-radius-scale));
+  --lunabot-radius-bubble-inset: max(0px, calc(var(--lunabot-radius-bubble) - var(--lunabot-space-3) - 1px));
+  --lunabot-radius-modal: min(30px, var(--lunabot-radius-scale));
+  --lunabot-radius-media-preview: max(0px, calc(var(--lunabot-radius-lg) - 1px));
+  --lunabot-radius-pill: min(999px, var(--lunabot-radius-scale));
+  --lunabot-radius-logo: min(20%, var(--lunabot-radius-scale));
+  --lunabot-control-xs: 24px;
+  --lunabot-control-sm: 28px;
+  --lunabot-control-md: 32px;
+  --lunabot-control-lg: 36px;
+  --lunabot-control-xl: 40px;
+  --lunabot-icon-xs: 12px;
+  --lunabot-icon-sm: 14px;
+  --lunabot-icon-md: 16px;
+  --lunabot-icon-lg: 20px;
+  --lunabot-duration-fast: 120ms;
+  --lunabot-duration-hover: 0ms;
+  --lunabot-duration-selectable-hover: var(--lunabot-duration-hover);
+  --lunabot-duration-dialog: 100ms;
+  --lunabot-duration-normal: 160ms;
+  --lunabot-duration-slow: 200ms;
+  --lunabot-duration-overlay: 240ms;
+  --lunabot-duration-toast-enter: 340ms;
+  --lunabot-duration-toast-exit: 220ms;
+  --lunabot-duration-island-content: 340ms;
+  --lunabot-duration-island-content-exit: 220ms;
+  --stream-gap: 60ms;
+  --stream-fade: 400ms;
+  --stream-blur: 2px;
+  --stream-ease: cubic-bezier(0.22, 1, 0.36, 1);
+  --lunabot-agent-activity-exit-delay: 500ms;
+  --lunabot-ease-out: cubic-bezier(0.23, 1, 0.32, 1);
+  --lunabot-ease-in-out: cubic-bezier(0.77, 0, 0.175, 1);
+  --lunabot-ease-drawer: cubic-bezier(0.32, 0.72, 0, 1);
+  --text-swap-dur: 150ms;
+  --text-swap-translate-y: 4px;
+  --text-swap-blur: 2px;
+  --text-swap-ease: ease-in-out;
+  --modal-open-dur: 250ms;
+  --modal-close-dur: 150ms;
+  --modal-scale: 0.96;
+  --modal-scale-close: 0.96;
+  --modal-ease: cubic-bezier(0.22, 1, 0.36, 1);
+  --page-slide-dur: 250ms;
+  --page-fade-dur: 250ms;
+  --page-slide-distance: 8px;
+  --page-blur: 3px;
+  --page-stagger: 0ms;
+  --page-exit-enabled: 1;
+  --page-slide-ease: cubic-bezier(0.22, 1, 0.36, 1);
+  --page-fade-ease: cubic-bezier(0.22, 1, 0.36, 1);
+  --shake-distance: 6px;
+  --shake-overshoot: 4px;
+  --shake-dur-a: 80ms;
+  --shake-dur-b: 60ms;
+  --shake-ease: cubic-bezier(0.22, 1, 0.36, 1);
+  --revert-hold: 3000ms;
+  --revert-dur: 280ms;
+  --lunabot-focus-ring: 0 0 0 3px var(--lunabot-border-focus);
+  --lunabot-layer-dropdown: 40;
+  --lunabot-layer-popover: 60;
+  --lunabot-layer-dialog: 100;
+  --lunabot-layer-toast: 120;
+  font-family: var(--lunabot-font-sans);
+  font-synthesis: none;
+  text-rendering: geometricPrecision;
+}
+
+/* Theme x mode palettes. Each block sets the base tokens for one combination of
+   data-theme (identity: fonts, radii, shadows, avatar family) and data-mode (palette).
+   Derived tokens below are built from these base variables. Edit values here only. */
+
+/* Papel, claro: warm paper with serif display type. */
+:root[data-theme="papel"][data-mode="light"],
+[data-theme="papel"][data-mode="light"] {
+  color-scheme: light;
+  --lunabot-font-display: "Instrument Serif", Georgia, "Times New Roman", serif;
+  --lunabot-font-sans:
+    "Instrument Sans Variable", "Inter Variable", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --lunabot-font-mono: "DM Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  --lunabot-radius-scale: 999px;
+  /* Surfaces and text */
+  --lunabot-paper: #f4f1ea;
+  --lunabot-surface: #f4f1ea;
+  --lunabot-surface-raised: #f9f7f1;
+  --lunabot-surface-sunken: #ece8dc;
+  --lunabot-ink: #1b1b1a;
+  --lunabot-ink-2: #5b5a55;
+  --lunabot-ink-3: #67645c;
+  --lunabot-line: #dcd7ca;
+  --lunabot-line-strong: #cfc9b9;
+  /* Accent and inverse */
+  --lunabot-accent: #2a4d8f;
+  --lunabot-accent-ink: #f4f1ea;
+  --lunabot-accent-text: #2a4d8f;
+  --lunabot-inverse-surface: #1b1b1a;
+  --lunabot-inverse-ink: #f4f1ea;
+  --lunabot-scrim: rgb(27 27 26 / 0.45);
+  /* Status */
+  --lunabot-success: #297046;
+  --lunabot-warning: #8a5a00;
+  --lunabot-danger: #b3261e;
+  --lunabot-danger-strong: #9a1f18;
+  /* Question and message badges */
+  --lunabot-question-option: #1e6d7b;
+  --lunabot-question-badge-text: #145a66;
+  --lunabot-message-badge-text: #1d5c9e;
+  /* Brand, device and file-type colors: fixed per mode. */
+  --lunabot-bg-notch: #000000;
+  --lunabot-provider-claude: #d97757;
+  --lunabot-logo-production: #d6adf2;
+  --lunabot-logo-eye: #040007;
+  --lunabot-unread-surface: #74b9ff;
+  --lunabot-unread-text: #07131f;
+  --lunabot-island-compact-name: #fff;
+  --lunabot-file-blue: #74b9ff;
+  --lunabot-file-orange: #f0a06a;
+  --lunabot-file-teal: #6bc7d9;
+  --lunabot-file-pink: #d98ac9;
+  /* Avatar palette, slots 1-8: Brasa, Ambar, Musgo, Lagoa, Mare, Ametista, Orquidea, Grafite. */
+  --lunabot-avatar-1: #c8402b;
+  --lunabot-avatar-2: #a86a00;
+  --lunabot-avatar-3: #2f7d4a;
+  --lunabot-avatar-4: #1f7a6d;
+  --lunabot-avatar-5: #2a5fb8;
+  --lunabot-avatar-6: #6b46c9;
+  --lunabot-avatar-7: #b0388a;
+  --lunabot-avatar-8: #4a4944;
+}
+
+/* Papel, escuro: the same warm paper at night. */
+:root[data-theme="papel"][data-mode="dark"],
+[data-theme="papel"][data-mode="dark"] {
+  color-scheme: dark;
+  --lunabot-font-display: "Instrument Serif", Georgia, "Times New Roman", serif;
+  --lunabot-font-sans:
+    "Instrument Sans Variable", "Inter Variable", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --lunabot-font-mono: "DM Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  --lunabot-radius-scale: 999px;
+  /* Surfaces and text */
+  --lunabot-paper: #1a1815;
+  --lunabot-surface: #211e1a;
+  --lunabot-surface-raised: #28241f;
+  --lunabot-surface-sunken: #141210;
+  --lunabot-ink: #efe9dc;
+  --lunabot-ink-2: #b8b1a2;
+  --lunabot-ink-3: #a6a095;
+  --lunabot-line: #34302a;
+  --lunabot-line-strong: #433e36;
+  /* Accent and inverse */
+  --lunabot-accent: #8fb0f0;
+  --lunabot-accent-ink: #14161c;
+  --lunabot-accent-text: #8fb0f0;
+  --lunabot-inverse-surface: #efe9dc;
+  --lunabot-inverse-ink: #1a1815;
+  --lunabot-scrim: rgb(0 0 0 / 0.6);
+  /* Status */
+  --lunabot-success: #7bc996;
+  --lunabot-warning: #e3b866;
+  --lunabot-danger: #ef8b82;
+  --lunabot-danger-strong: #f29a90;
+  /* Question and message badges */
+  --lunabot-question-option: #7ec8d6;
+  --lunabot-question-badge-text: #9ddbe6;
+  --lunabot-message-badge-text: #a7c9f5;
+  /* Brand, device and file-type colors: fixed per mode. */
+  --lunabot-bg-notch: #000000;
+  --lunabot-provider-claude: #d97757;
+  --lunabot-logo-production: #d6adf2;
+  --lunabot-logo-eye: #040007;
+  --lunabot-unread-surface: #74b9ff;
+  --lunabot-unread-text: #07131f;
+  --lunabot-island-compact-name: #fff;
+  --lunabot-file-blue: #74b9ff;
+  --lunabot-file-orange: #f0a06a;
+  --lunabot-file-teal: #6bc7d9;
+  --lunabot-file-pink: #d98ac9;
+  /* Avatar palette, slots 1-8: Brasa, Ambar, Musgo, Lagoa, Mare, Ametista, Orquidea, Nevoa. */
+  --lunabot-avatar-1: #ef6a55;
+  --lunabot-avatar-2: #e8b04b;
+  --lunabot-avatar-3: #6fcf8a;
+  --lunabot-avatar-4: #4fc3b0;
+  --lunabot-avatar-5: #6aa6f0;
+  --lunabot-avatar-6: #a98bf5;
+  --lunabot-avatar-7: #e27fc0;
+  --lunabot-avatar-8: #b9b4aa;
+}
+
+/* Eclipse, claro: cool paper with the same geometric type. */
+:root[data-theme="eclipse"][data-mode="light"],
+[data-theme="eclipse"][data-mode="light"] {
+  color-scheme: light;
+  --lunabot-font-display: "Newsreader Variable", Georgia, "Times New Roman", serif;
+  --lunabot-font-sans: "IBM Plex Sans", "Inter Variable", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --lunabot-font-mono: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  --lunabot-radius-scale: 999px;
+  /* Surfaces and text */
+  --lunabot-paper: #eef0f4;
+  --lunabot-surface: #f3f4f7;
+  --lunabot-surface-raised: #f7f8fa;
+  --lunabot-surface-sunken: #e3e6ec;
+  --lunabot-ink: #14161c;
+  --lunabot-ink-2: #4a4f5c;
+  --lunabot-ink-3: #5e6472;
+  --lunabot-line: #d5d9e2;
+  --lunabot-line-strong: #c4c9d4;
+  /* Accent and inverse */
+  --lunabot-accent: #9a5f00;
+  --lunabot-accent-ink: #ffffff;
+  --lunabot-accent-text: #8f5800;
+  --lunabot-inverse-surface: #14161c;
+  --lunabot-inverse-ink: #eef0f4;
+  --lunabot-scrim: rgb(20 22 28 / 0.45);
+  /* Status */
+  --lunabot-success: #1d7342;
+  --lunabot-warning: #7a5200;
+  --lunabot-danger: #b3261e;
+  --lunabot-danger-strong: #9a1f18;
+  /* Question and message badges */
+  --lunabot-question-option: #13677a;
+  --lunabot-question-badge-text: #0f5664;
+  --lunabot-message-badge-text: #1d5c9e;
+  /* Brand, device and file-type colors: fixed per mode. */
+  --lunabot-bg-notch: #000000;
+  --lunabot-provider-claude: #d97757;
+  --lunabot-logo-production: #d6adf2;
+  --lunabot-logo-eye: #040007;
+  --lunabot-unread-surface: #74b9ff;
+  --lunabot-unread-text: #07131f;
+  --lunabot-island-compact-name: #fff;
+  --lunabot-file-blue: #74b9ff;
+  --lunabot-file-orange: #f0a06a;
+  --lunabot-file-teal: #6bc7d9;
+  --lunabot-file-pink: #d98ac9;
+  /* Avatar palette, slots 1-8: Brasa, Ambar, Musgo, Lagoa, Mare, Ametista, Orquidea, Grafite. */
+  --lunabot-avatar-1: #c8402b;
+  --lunabot-avatar-2: #a86a00;
+  --lunabot-avatar-3: #2f7d4a;
+  --lunabot-avatar-4: #1f7a6d;
+  --lunabot-avatar-5: #2a5fb8;
+  --lunabot-avatar-6: #6b46c9;
+  --lunabot-avatar-7: #b0388a;
+  --lunabot-avatar-8: #4a4944;
+}
+
+/* Eclipse, escuro: the default when no attribute is set. */
+:root,
+:root[data-theme="eclipse"][data-mode="dark"],
+[data-theme="eclipse"][data-mode="dark"] {
+  color-scheme: dark;
+  --lunabot-font-display: "Newsreader Variable", Georgia, "Times New Roman", serif;
+  --lunabot-font-sans: "IBM Plex Sans", "Inter Variable", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --lunabot-font-mono: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  --lunabot-radius-scale: 999px;
+  /* Surfaces and text */
+  --lunabot-paper: #0d0e0f;
+  --lunabot-surface: #111213;
+  --lunabot-surface-raised: #1a1c1d;
+  --lunabot-surface-sunken: #0a0b0c;
+  --lunabot-ink: #ece8e1;
+  --lunabot-ink-2: #a9a49b;
+  --lunabot-ink-3: #9a978f;
+  --lunabot-line: #232526;
+  --lunabot-line-strong: #2c2e30;
+  /* Accent and inverse */
+  --lunabot-accent: #e8b04b;
+  --lunabot-accent-ink: #0d0e0f;
+  --lunabot-accent-text: #e8b04b;
+  --lunabot-inverse-surface: #ece8e1;
+  --lunabot-inverse-ink: #0d0e0f;
+  --lunabot-scrim: rgb(0 0 0 / 0.6);
+  /* Status */
+  --lunabot-success: #61c985;
+  --lunabot-warning: #e3b866;
+  --lunabot-danger: #e47d75;
+  --lunabot-danger-strong: #ff6074;
+  /* Question and message badges */
+  --lunabot-question-option: #6bc7d9;
+  --lunabot-question-badge-text: #8bdee8;
+  --lunabot-message-badge-text: #91c8ff;
+  /* Brand, device and file-type colors: fixed per mode. */
+  --lunabot-bg-notch: #000000;
+  --lunabot-provider-claude: #d97757;
+  --lunabot-logo-production: #d6adf2;
+  --lunabot-logo-eye: #040007;
+  --lunabot-unread-surface: #74b9ff;
+  --lunabot-unread-text: #07131f;
+  --lunabot-island-compact-name: #fff;
+  --lunabot-file-blue: #74b9ff;
+  --lunabot-file-orange: #f0a06a;
+  --lunabot-file-teal: #6bc7d9;
+  --lunabot-file-pink: #d98ac9;
+  /* Avatar palette, slots 1-8: Brasa, Ambar, Musgo, Lagoa, Mare, Ametista, Orquidea, Nevoa. */
+  --lunabot-avatar-1: #ef6a55;
+  --lunabot-avatar-2: #e8b04b;
+  --lunabot-avatar-3: #6fcf8a;
+  --lunabot-avatar-4: #4fc3b0;
+  --lunabot-avatar-5: #6aa6f0;
+  --lunabot-avatar-6: #a98bf5;
+  --lunabot-avatar-7: #e27fc0;
+  --lunabot-avatar-8: #b9b4aa;
+}
+
+/* Quadrante, claro: technical light, sharp corners, no shadows. */
+:root[data-theme="quadrante"][data-mode="light"],
+[data-theme="quadrante"][data-mode="light"] {
+  color-scheme: light;
+  --lunabot-font-display:
+    "Hanken Grotesk Variable", "Inter Variable", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --lunabot-font-sans:
+    "Hanken Grotesk Variable", "Inter Variable", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --lunabot-font-mono: "JetBrains Mono Variable", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  --lunabot-radius-scale: 2px;
+  /* Surfaces and text */
+  --lunabot-paper: #eceef0;
+  --lunabot-surface: #ffffff;
+  --lunabot-surface-raised: #ffffff;
+  --lunabot-surface-sunken: #e2e5e8;
+  --lunabot-ink: #14171a;
+  --lunabot-ink-2: #4b5258;
+  --lunabot-ink-3: #60666d;
+  --lunabot-line: #d6d9dc;
+  --lunabot-line-strong: #c9cdd1;
+  /* Accent and inverse */
+  --lunabot-accent: #c93a10;
+  --lunabot-accent-ink: #ffffff;
+  --lunabot-accent-text: #b43a0c;
+  --lunabot-inverse-surface: #14171a;
+  --lunabot-inverse-ink: #eceef0;
+  --lunabot-scrim: rgb(20 23 26 / 0.45);
+  /* Status */
+  --lunabot-success: #12753c;
+  --lunabot-warning: #8e5c00;
+  --lunabot-danger: #c42828;
+  --lunabot-danger-strong: #a31515;
+  /* Question and message badges */
+  --lunabot-question-option: #0e6c7b;
+  --lunabot-question-badge-text: #0a5a67;
+  --lunabot-message-badge-text: #1653a8;
+  /* Brand, device and file-type colors: fixed per mode. */
+  --lunabot-bg-notch: #000000;
+  --lunabot-provider-claude: #d97757;
+  --lunabot-logo-production: #d6adf2;
+  --lunabot-logo-eye: #040007;
+  --lunabot-unread-surface: #74b9ff;
+  --lunabot-unread-text: #07131f;
+  --lunabot-island-compact-name: #fff;
+  --lunabot-file-blue: #74b9ff;
+  --lunabot-file-orange: #f0a06a;
+  --lunabot-file-teal: #6bc7d9;
+  --lunabot-file-pink: #d98ac9;
+  /* Avatar palette, slots 1-8: Brasa, Ambar, Musgo, Lagoa, Mare, Ametista, Orquidea, Grafite. */
+  --lunabot-avatar-1: #c8402b;
+  --lunabot-avatar-2: #a86a00;
+  --lunabot-avatar-3: #2f7d4a;
+  --lunabot-avatar-4: #1f7a6d;
+  --lunabot-avatar-5: #2a5fb8;
+  --lunabot-avatar-6: #6b46c9;
+  --lunabot-avatar-7: #b0388a;
+  --lunabot-avatar-8: #4a4944;
+  --lunabot-shadow-raised: none;
+  --lunabot-shadow-popover-ambient: transparent;
+  --lunabot-shadow-popover-key: transparent;
+  --lunabot-shadow-dialog: transparent;
+  --lunabot-shadow-dynamic-island: transparent;
+}
+
+/* Quadrante, escuro: the same technical frame at night. */
+:root[data-theme="quadrante"][data-mode="dark"],
+[data-theme="quadrante"][data-mode="dark"] {
+  color-scheme: dark;
+  --lunabot-font-display:
+    "Hanken Grotesk Variable", "Inter Variable", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --lunabot-font-sans:
+    "Hanken Grotesk Variable", "Inter Variable", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --lunabot-font-mono: "JetBrains Mono Variable", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  --lunabot-radius-scale: 2px;
+  /* Surfaces and text */
+  --lunabot-paper: #121416;
+  --lunabot-surface: #181b1e;
+  --lunabot-surface-raised: #1e2226;
+  --lunabot-surface-sunken: #0d0f10;
+  --lunabot-ink: #e6e9ec;
+  --lunabot-ink-2: #aeb4ba;
+  --lunabot-ink-3: #989ea5;
+  --lunabot-line: #2a2f34;
+  --lunabot-line-strong: #353b41;
+  /* Accent and inverse */
+  --lunabot-accent: #ff6a3d;
+  --lunabot-accent-ink: #14171a;
+  --lunabot-accent-text: #ff7349;
+  --lunabot-inverse-surface: #e6e9ec;
+  --lunabot-inverse-ink: #121416;
+  --lunabot-scrim: rgb(0 0 0 / 0.6);
+  /* Status */
+  --lunabot-success: #5fd28f;
+  --lunabot-warning: #f0c060;
+  --lunabot-danger: #ff7a6e;
+  --lunabot-danger-strong: #ff7164;
+  /* Question and message badges */
+  --lunabot-question-option: #6fd0e0;
+  --lunabot-question-badge-text: #9ee6f0;
+  --lunabot-message-badge-text: #9ccaff;
+  /* Brand, device and file-type colors: fixed per mode. */
+  --lunabot-bg-notch: #000000;
+  --lunabot-provider-claude: #d97757;
+  --lunabot-logo-production: #d6adf2;
+  --lunabot-logo-eye: #040007;
+  --lunabot-unread-surface: #74b9ff;
+  --lunabot-unread-text: #07131f;
+  --lunabot-island-compact-name: #fff;
+  --lunabot-file-blue: #74b9ff;
+  --lunabot-file-orange: #f0a06a;
+  --lunabot-file-teal: #6bc7d9;
+  --lunabot-file-pink: #d98ac9;
+  /* Avatar palette, slots 1-8: Brasa, Ambar, Musgo, Lagoa, Mare, Ametista, Orquidea, Nevoa. */
+  --lunabot-avatar-1: #ef6a55;
+  --lunabot-avatar-2: #e8b04b;
+  --lunabot-avatar-3: #6fcf8a;
+  --lunabot-avatar-4: #4fc3b0;
+  --lunabot-avatar-5: #6aa6f0;
+  --lunabot-avatar-6: #a98bf5;
+  --lunabot-avatar-7: #e27fc0;
+  --lunabot-avatar-8: #b9b4aa;
+  --lunabot-shadow-raised: none;
+  --lunabot-shadow-popover-ambient: transparent;
+  --lunabot-shadow-popover-key: transparent;
+  --lunabot-shadow-dialog: transparent;
+  --lunabot-shadow-dynamic-island: transparent;
+}
+
+/* Derived tokens: built from the active theme's base variables. Overlays use ink (light on dark, dark on light) or scrim/paper. */
+:root {
+  --lunabot-bg-canvas: var(--lunabot-paper);
+  --lunabot-bg-canvas-clear: color-mix(in srgb, var(--lunabot-paper) 0%, transparent);
+  --lunabot-bg-sidebar: var(--lunabot-surface);
+  --lunabot-bg-surface: color-mix(in srgb, var(--lunabot-ink) 6%, var(--lunabot-surface-raised));
+  --lunabot-bg-surface-clear: color-mix(in srgb, var(--lunabot-bg-surface) 0%, transparent);
+  --lunabot-bg-surface-raised: color-mix(in srgb, var(--lunabot-ink) 10%, var(--lunabot-surface-raised));
+  --lunabot-bg-control: var(--lunabot-surface-raised);
+  --lunabot-bg-control-hover: color-mix(in srgb, var(--lunabot-ink) 11%, var(--lunabot-surface-raised));
+  --lunabot-bg-control-active: color-mix(in srgb, var(--lunabot-ink) 16%, var(--lunabot-surface-raised));
+  --lunabot-tabs-bar-bg: color-mix(in srgb, var(--lunabot-ink) 5%, var(--lunabot-surface-raised));
+  --lunabot-tabs-pill-bg: color-mix(in srgb, var(--lunabot-ink) 22%, var(--lunabot-surface-raised));
+  --lunabot-bg-switch: color-mix(in srgb, var(--lunabot-ink) 34%, var(--lunabot-surface-raised));
+  --lunabot-bg-overlay: color-mix(in srgb, var(--lunabot-paper) 92%, transparent);
+  --lunabot-dialog-overlay: color-mix(in srgb, var(--lunabot-scrim) 17%, transparent);
+  --lunabot-dialog-ring: color-mix(in srgb, var(--lunabot-ink) 10%, transparent);
+  --lunabot-command-overlay: color-mix(in srgb, var(--lunabot-paper) 76%, transparent);
+  --lunabot-bg-glass: color-mix(in srgb, var(--lunabot-bg-surface) 76%, transparent);
+  --lunabot-bg-host-inset: var(--lunabot-surface-sunken);
+  --lunabot-queue-surface: var(--lunabot-bg-surface);
+  --lunabot-queue-border: var(--lunabot-border-strong);
+  --lunabot-queue-text: var(--lunabot-text-primary);
+  --lunabot-queue-action: var(--lunabot-text-muted);
+
+  --lunabot-border: var(--lunabot-line);
+  --lunabot-border-strong: var(--lunabot-line-strong);
+  --lunabot-image-outline: color-mix(in srgb, var(--lunabot-ink) 10%, transparent);
+  --lunabot-border-focus: color-mix(in srgb, var(--lunabot-accent) 72%, transparent);
+  --lunabot-border-inverse: color-mix(in srgb, var(--lunabot-inverse-ink) 14%, transparent);
+
+  --lunabot-text-primary: var(--lunabot-ink);
+  --lunabot-text-secondary: var(--lunabot-ink-2);
+  --lunabot-text-muted: var(--lunabot-ink-3);
+  --lunabot-text-dim: color-mix(in srgb, var(--lunabot-ink-3) 70%, transparent);
+  --lunabot-text-readable: var(--lunabot-ink-2);
+  --lunabot-text-placeholder: color-mix(in srgb, var(--lunabot-ink) 38%, transparent);
+  --lunabot-text-inverse: var(--lunabot-inverse-ink);
+  --lunabot-text-muted-inverse: color-mix(in srgb, var(--lunabot-inverse-ink) 52%, transparent);
+  --lunabot-text-dim-inverse: color-mix(in srgb, var(--lunabot-inverse-ink) 36%, transparent);
+  --lunabot-surface-inverse: var(--lunabot-inverse-surface);
+
+  --lunabot-accent-hover: color-mix(in srgb, var(--lunabot-accent) 88%, var(--lunabot-ink));
+  --lunabot-accent-soft: color-mix(in srgb, var(--lunabot-accent) 16%, transparent);
+  --lunabot-accent-strong: color-mix(in srgb, var(--lunabot-accent) 34%, transparent);
+  --lunabot-settings-accent: var(--lunabot-accent);
+  --lunabot-settings-accent-hover: var(--lunabot-accent-hover);
+  --lunabot-settings-accent-text: var(--lunabot-accent-text);
+  --lunabot-settings-accent-soft: var(--lunabot-accent-soft);
+  --lunabot-settings-accent-strong: var(--lunabot-accent-strong);
+  --lunabot-settings-text-muted: var(--lunabot-text-secondary);
+  --lunabot-settings-danger: var(--lunabot-danger-strong);
+  --lunabot-settings-danger-hover: color-mix(in srgb, var(--lunabot-danger-strong) 88%, var(--lunabot-ink));
+  --lunabot-settings-danger-soft: color-mix(in srgb, var(--lunabot-danger-strong) 20%, transparent);
+  --lunabot-settings-danger-focus: color-mix(in srgb, var(--lunabot-danger-strong) 40%, transparent);
+  --lunabot-settings-danger-border: color-mix(in srgb, var(--lunabot-danger-strong) 50%, transparent);
+
+  --lunabot-provider-codex: var(--lunabot-text-primary);
+  --lunabot-provider-grok: var(--lunabot-text-primary);
+  --lunabot-logo-dev: var(--lunabot-warning);
+  --lunabot-logo-preview: var(--lunabot-success);
+  --lunabot-unread-divider: var(--lunabot-unread-surface);
+
+  --lunabot-success-soft: color-mix(in srgb, var(--lunabot-success) 12%, transparent);
+  --lunabot-success-wash: color-mix(in srgb, var(--lunabot-success) 4.5%, transparent);
+  --lunabot-warning-soft: color-mix(in srgb, var(--lunabot-warning) 12%, transparent);
+  --lunabot-question-option-soft: color-mix(in srgb, var(--lunabot-question-option) 14%, transparent);
+  --lunabot-question-option-hover: color-mix(in srgb, var(--lunabot-question-option) 20%, transparent);
+  --lunabot-question-option-pressed: color-mix(in srgb, var(--lunabot-question-option) 26%, transparent);
+  --lunabot-island-identity-name: var(--lunabot-text-primary);
+  --lunabot-question-badge-soft: color-mix(in srgb, var(--lunabot-question-option) 16%, transparent);
+  --lunabot-question-badge-border: color-mix(in srgb, var(--lunabot-question-option) 24%, transparent);
+  --lunabot-message-badge-soft: color-mix(in srgb, var(--lunabot-unread-surface) 16%, transparent);
+  --lunabot-message-badge-border: color-mix(in srgb, var(--lunabot-unread-surface) 24%, transparent);
+  --lunabot-approval-badge-soft: color-mix(in srgb, var(--lunabot-warning) 18%, transparent);
+  --lunabot-approval-badge-border: color-mix(in srgb, var(--lunabot-warning) 30%, transparent);
+  --lunabot-danger-soft: color-mix(in srgb, var(--lunabot-danger) 13%, transparent);
+  --lunabot-button-destructive: var(--lunabot-danger);
+  --lunabot-button-destructive-soft: color-mix(in srgb, var(--lunabot-button-destructive) 20%, transparent);
+  --lunabot-button-destructive-hover: color-mix(in srgb, var(--lunabot-button-destructive) 30%, transparent);
+  --lunabot-button-destructive-focus: color-mix(in srgb, var(--lunabot-button-destructive) 40%, transparent);
+  --lunabot-button-destructive-border: color-mix(in srgb, var(--lunabot-button-destructive) 50%, transparent);
+
+  --lunabot-file-blue-soft: color-mix(in srgb, var(--lunabot-file-blue) 14%, transparent);
+  --lunabot-file-yellow: var(--lunabot-warning);
+  --lunabot-file-yellow-soft: var(--lunabot-warning-soft);
+  --lunabot-file-orange-soft: color-mix(in srgb, var(--lunabot-file-orange) 14%, transparent);
+  --lunabot-file-teal-soft: color-mix(in srgb, var(--lunabot-file-teal) 14%, transparent);
+  --lunabot-file-green: var(--lunabot-success);
+  --lunabot-file-green-soft: var(--lunabot-success-soft);
+  --lunabot-file-red: var(--lunabot-danger);
+  --lunabot-file-red-soft: var(--lunabot-danger-soft);
+  --lunabot-file-pink-soft: color-mix(in srgb, var(--lunabot-file-pink) 14%, transparent);
+  --lunabot-file-purple: var(--lunabot-accent-text);
+  --lunabot-file-purple-soft: color-mix(in srgb, var(--lunabot-accent) 14%, transparent);
+
+  --lunabot-data-table-header-bg: var(--lunabot-bg-surface);
+  --lunabot-data-table-body-bg: var(--lunabot-surface-raised);
+  --lunabot-data-table-border: var(--lunabot-line-strong);
+  --lunabot-data-table-header-text: var(--lunabot-text-secondary);
+  --lunabot-data-table-text: var(--lunabot-text-primary);
+  --lunabot-data-table-outer-border: color-mix(in srgb, var(--lunabot-ink) 0%, transparent);
+  --lunabot-data-table-ring: color-mix(in srgb, var(--lunabot-ink) 12%, transparent);
+  --lunabot-comparison-table-yes: var(--lunabot-success);
+
+  --lunabot-shadow-popover-ambient: color-mix(in srgb, var(--lunabot-scrim) 17%, transparent);
+  --lunabot-shadow-popover-key: color-mix(in srgb, var(--lunabot-scrim) 17%, transparent);
+  --lunabot-shadow-dialog: color-mix(in srgb, var(--lunabot-scrim) 80%, transparent);
+  --lunabot-shadow-dynamic-island: var(--lunabot-scrim);
+  --lunabot-shadow-ring: color-mix(in srgb, var(--lunabot-ink) 4%, transparent);
+  --lunabot-shadow-raised: 0 12px 32px var(--lunabot-shadow-popover-ambient);
+
+  --lunabot-white: var(--lunabot-text-primary);
+  --lunabot-black: var(--lunabot-bg-canvas);
+  --lunabot-sidebar: var(--lunabot-bg-sidebar);
+  --lunabot-main: var(--lunabot-bg-canvas);
+  --lunabot-main-deep: var(--lunabot-bg-canvas);
+  --lunabot-hover: color-mix(in srgb, var(--lunabot-ink) 6%, transparent);
+  --lunabot-active: var(--lunabot-bg-surface);
+  --lunabot-muted: var(--lunabot-text-muted);
+  --lunabot-dim: var(--lunabot-text-dim);
+  --lunabot-teal: var(--lunabot-success);
+  --lunabot-orange: var(--lunabot-warning);
+  --lunabot-purple: var(--lunabot-accent);
+  --lunabot-blue: var(--lunabot-accent);
+  --lunabot-violet: var(--lunabot-accent);
+  --lunabot-coral: var(--lunabot-danger);
+  --background: var(--lunabot-bg-canvas);
+  --surface: var(--lunabot-bg-surface);
+  --border: var(--lunabot-border);
+  --text-primary: var(--lunabot-text-primary);
+  --text-secondary: var(--lunabot-text-secondary);
+  --text-muted: var(--lunabot-text-muted);
+  --accent: var(--lunabot-accent);
+  --danger: var(--lunabot-danger);
+}

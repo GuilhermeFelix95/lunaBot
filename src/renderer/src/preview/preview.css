@@ -1,0 +1,94 @@
+@import "../styles.css";
+@source "../";
+
+.lunabot-playground-root {
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  background: var(--lunabot-bg-canvas);
+}
+
+.lunabot-playground-loading {
+  width: 100%;
+  height: 100%;
+  background: var(--lunabot-bg-canvas);
+}
+
+.lunabot-playground-root .account-dock-static .account-dock-trigger {
+  cursor: default;
+  grid-template-columns: calc(var(--account-dock-leading-width) - 12px) minmax(0, 1fr);
+  pointer-events: none;
+}
+
+.lunabot-playground-root .unread-messages-banner {
+  display: none;
+}
+
+@media (max-width: 640px) {
+  .lunabot-playground-root .app-frame {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: 68px minmax(0, 1fr);
+  }
+
+  .lunabot-playground-root .account-dock,
+  .lunabot-playground-root .left-panel-resizer,
+  .lunabot-playground-root .sidebar-topbar,
+  .lunabot-playground-root .sidebar-search-wrap,
+  .lunabot-playground-root .sidebar-chat-group[aria-labelledby="sidebar-people-heading"] {
+    display: none;
+  }
+
+  .lunabot-playground-root .sidebar {
+    grid-column: 1;
+    grid-row: 1;
+    flex-direction: row;
+    border-right: 0;
+    border-bottom: 1px solid var(--lunabot-border);
+  }
+
+  .lunabot-playground-root .bot-list,
+  .lunabot-playground-root .sidebar-compact .bot-list {
+    display: flex;
+    overflow-x: auto;
+    overflow-y: hidden;
+    align-items: center;
+    justify-content: center;
+    gap: var(--lunabot-space-1-5);
+    padding: var(--lunabot-space-2) var(--lunabot-space-3);
+  }
+
+  .lunabot-playground-root .sidebar-chat-group[aria-labelledby="sidebar-agents-heading"],
+  .lunabot-playground-root .sidebar-chat-group[aria-label="Agents"] {
+    display: flex;
+    align-items: center;
+    gap: var(--lunabot-space-1-5);
+    margin: 0;
+  }
+
+  .lunabot-playground-root .sidebar-chat-group[aria-labelledby="sidebar-agents-heading"] > header,
+  .lunabot-playground-root .sidebar-chat-group[aria-label="Agents"] > header {
+    display: none;
+  }
+
+  .lunabot-playground-root .agent-row,
+  .lunabot-playground-root .sidebar-compact .agent-row {
+    width: 48px;
+    height: 48px;
+    flex: 0 0 48px;
+    margin: 0;
+    padding: 6px;
+  }
+
+  .lunabot-playground-root .sidebar-compact .bot-row-avatar {
+    transform: none;
+  }
+
+  .lunabot-playground-root .bot-row-copy {
+    display: none;
+  }
+
+  .lunabot-playground-root .conversation-panel {
+    grid-column: 1;
+    grid-row: 2;
+  }
+}

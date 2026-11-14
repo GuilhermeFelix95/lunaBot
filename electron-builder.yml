@@ -1,0 +1,139 @@
+appId: app.lunabot.desktop
+productName: Luna Bot
+asar: true
+artifactName: ${productName}-${version}-${arch}.${ext}
+electronUpdaterCompatibility: ">=2.16"
+publish:
+  provider: github
+  owner: GuilhermeFelix95
+  repo: lunaBot
+  releaseType: release
+electronFuses:
+  resetAdHocDarwinSignature: true
+  runAsNode: false
+  enableCookieEncryption: true
+  enableNodeOptionsEnvironmentVariable: false
+  enableNodeCliInspectArguments: false
+  enableEmbeddedAsarIntegrityValidation: true
+  onlyLoadAppFromAsar: true
+  loadBrowserProcessSpecificV8Snapshot: false
+  grantFileProtocolExtraPrivileges: false
+files:
+  - out/**/*
+  - package.json
+  - LICENSE
+  - "!node_modules/@anthropic-ai/claude-agent-sdk-darwin-*/**/*"
+  - "!node_modules/@anthropic-ai/claude-agent-sdk-win32-*/**/*"
+  - "!node_modules/@anthropic-ai/claude-agent-sdk-linux-*/**/*"
+extraResources:
+  - from: build/icon-production.png
+    to: icons/icon-production.png
+  - from: build/icon-dev.png
+    to: icons/icon-dev.png
+  - from: build/icon-preview.png
+    to: icons/icon-preview.png
+  - from: node_modules/electron/dist/LICENSE
+    to: licenses/Electron-LICENSE
+  - from: node_modules/electron/dist/LICENSES.chromium.html
+    to: licenses/LICENSES.chromium.html
+  - from: build/licenses/OpenAI-Whisper-LICENSE
+    to: licenses/OpenAI-Whisper-LICENSE
+  - from: build/licenses/whisper.cpp-LICENSE
+    to: licenses/whisper.cpp-LICENSE
+  - from: .lunabot-build/whisper/bin
+    to: whisper/bin
+directories:
+  output: dist
+mac:
+  category: public.app-category.productivity
+  minimumSystemVersion: "13.0"
+  notarize: true
+  hardenedRuntime: true
+  icon: build/icon-production.icns
+  extraResources:
+    - from: build/icon-production-macos-safe-area.png
+      to: icons/icon-production-macos-safe-area.png
+    - from: build/icon-dev-macos-safe-area.png
+      to: icons/icon-dev-macos-safe-area.png
+    - from: build/icon-preview-macos-safe-area.png
+      to: icons/icon-preview-macos-safe-area.png
+  entitlements: build/entitlements.mac.plist
+  entitlementsInherit: build/entitlements.mac.inherit.plist
+  darkModeSupport: true
+  extendInfo:
+    ElectronTeamID: ZTRDTUL87R
+    NSMicrophoneUsageDescription: Luna Bot uses the microphone to transcribe voice prompts locally on this Mac.
+    NSUserActivityTypes:
+      - NSUserActivityTypeBrowsingWeb
+  target:
+    - target: dmg
+      arch:
+        - arm64
+    - target: zip
+      arch:
+        - arm64
+win:
+  icon: build/icon-production.ico
+  executableName: LunaBot
+  # Not code-signed yet. electron-updater checks a signature only when the packaged app-update.yml names a
+  # publisher, and electron-builder writes that name only from a code signing certificate. A future signing
+  # setup belongs here, with win.signtoolOptions or win.azureSignOptions and a publisherName.
+  target:
+    - target: nsis
+      arch:
+        - x64
+nsis:
+  oneClick: true
+  perMachine: false
+  artifactName: LunaBot-Setup-${version}.${ext}
+  createDesktopShortcut: true
+  createStartMenuShortcut: true
+linux:
+  target:
+    - target: AppImage
+      arch:
+        - x64
+    - target: deb
+      arch:
+        - x64
+  category: Utility
+  executableName: lunabot
+  synopsis: Local-first desktop workspace for AI coding agents
+  description: A local-first multi-agent desktop workspace for Codex, Claude, and Grok.
+  icon: build/icons
+  maintainer: GuilhermeFelix95 <GuilhermeFelix95@users.noreply.github.com>
+  syncDesktopName: true
+  desktop:
+    entry:
+      Name: Luna Bot
+      Categories: Utility;
+      StartupWMClass: lunabot
+deb:
+  depends:
+    - libgtk-3-0
+    - libnotify4
+    - libnss3
+    - libxss1
+    - libxtst6
+    - xdg-utils
+    - libatspi2.0-0
+    - libuuid1
+    - libsecret-1-0
+  appArmorProfile: build/apparmor-profile
+dmg:
+  title: ${productName} ${version}
+  background: build/dmg-background.png
+  iconSize: 128
+  iconTextSize: 14
+  window:
+    x: 400
+    y: 467
+    width: 680
+    height: 506
+  contents:
+    - x: 190
+      y: 220
+    - x: 490
+      y: 220
+      type: link
+      path: /Applications

@@ -1,0 +1,6309 @@
+import type {
+  AgentEvent,
+  AttachmentImportEvent,
+  BotSummary,
+  BrowserPictureInPictureEvent,
+  BrowserTab,
+  ConversationPage,
+  ConversationSnapshot,
+  DynamicIslandAction,
+  QueueDelivery,
+  UpdateStatus,
+  VoiceModelStatus,
+} from "@lunabot/contracts/ipc";
+import { routineConversationEventItemType } from "@lunabot/contracts/ipc";
+import { fireEvent, render, screen, waitFor, within } from "@solidjs/testing-library";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import { App, AppControllerProvider, createAppController, createBotInitialMessage } from "./App";
+import { SIDEBAR_PINS_STORAGE_KEY } from "./sidebar-pins";
+import { SIDEBAR_COLLAPSED_STORAGE_KEY } from "./sidebar-sections";
+
+const defaultMatchMedia = window.matchMedia;
+
+let emitAgentEvent: ((event: AgentEvent) => void) | undefined;
+let emitAttachmentImport: ((event: AttachmentImportEvent) => void) | undefined;
+let emitBrowserPictureInPicture: ((event: BrowserPictureInPictureEvent) => void) | undefined;
+let emitUpdateStatus: ((status: UpdateStatus) => void) | undefined;
+let emitDynamicIslandAction: ((action: DynamicIslandAction) => void) | undefined;
+
+const BOTS: BotSummary[] = [
+  {
+    id: "chief",
+    provider: "codex",
+    name: "Chief",
+    title: "Chief of staff",
+    description: "Coordinates work",
+    notifications: "all",
+    model: "gpt-5.6-luna",
+    reasoningEffort: "medium",
+    avatarSeed: "chief",
+    avatarHue: null,
+    avatarUrl: null,
+    threadId: "thread-chief",
+    workspacePath: "/tmp/LunaBot/Bots/chief",
+    preview: "No messages yet",
+    updatedAt: null,
+  },
+  {
+    id: "sales-outbound",
+    provider: "codex",
+    name: "Sales Outbound",
+    title: "Outbound specialist",
+    description: "",
+    notifications: "all",
+    model: "gpt-5.6-luna",
+    reasoningEffort: "medium",
+    avatarSeed: "sales-outbound",
+    avatarHue: 280,
+    avatarUrl: null,
+    threadId: null,
+    workspacePath: "/tmp/LunaBot/Bots/sales-outbound",
+    preview: "No messages yet",
+    updatedAt: null,
+  },
+];
+
+function testConversationPage(
+  botId: string,
+  messages: ConversationPage["messages"] = [],
+  overrides: Partial<ConversationPage> = {},
+): ConversationPage {
+  return {
+    botId,
+    threadId: "thread-1",
+    activeTurnId: null,
+    revision: 1,
+    messages,
+    references: {},
+    readState: { unreadCount: 0, firstUnreadMessageId: null, throughMessageId: null },
+    pageInfo: { hasOlder: false, olderCursor: null },
+    ...overrides,
+  };
+}
+
+async function confirmOnboardingModel(): Promise<void> {
+  await screen.findByRole("button", { name: "Agent model: Luna" });
+}
+
+async function openProvidersDialog(): Promise<HTMLElement> {
+  await fireEvent.click(await screen.findByRole("button", { name: "Open account actions" }));
+  await fireEvent.click(screen.getByRole("button", { name: "Providers & permissions" }));
+  return screen.findByRole("dialog", { name: "Providers & permissions" });
+}
+
+async function openSettingsProviders(): Promise<HTMLElement> {
+  await fireEvent.click(await screen.findByRole("button", { name: "Settings" }));
+  return screen.findByRole("dialog", { name: "General" });
+}
+
+function queuedDelivery(
+  id: string,
+  text: string,
+  position: number | null,
+  overrides: Partial<QueueDelivery> = {},
+): QueueDelivery {
+  return {
+    id,
+    messageId: `${id}-message`,
+    recipientBotId: "chief",
+    sender: { kind: "user" },
+    text,
+    attachments: [],
+    replyToMessageId: null,
+    status: "queued",
+    position,
+    turnId: null,
+    error: null,
+    createdAt: `2026-08-20T10:00:0${position ?? 0}.000Z`,
+    ...overrides,
+  };
+}
+
+function installVoiceRecordingMocks(): void {
+  class RecordingMediaRecorder extends EventTarget {
+    readonly mimeType = "audio/webm";
+    state: RecordingState = "inactive";
+
+    start(): void {
+      this.state = "recording";
+    }
+
+    stop(): void {
+      this.state = "inactive";
+      const recording = new Blob([new Uint8Array([1])], { type: this.mimeType });
+      const dataAvailable = new Event("dataavailable");
+      Object.defineProperty(dataAvailable, "data", { value: recording });
+      this.dispatchEvent(dataAvailable);
+      this.dispatchEvent(new Event("stop"));
+    }
+  }
+  class TestAudioContext {
+    async decodeAudioData(): Promise<AudioBuffer> {
+      const decodedAudio: AudioBuffer = {
+        copyFromChannel: () => undefined,
+        copyToChannel: () => undefined,
+        duration: 1 / 16_000,
+        length: 1,
+        numberOfChannels: 1,
+        sampleRate: 16_000,
+        getChannelData: () => new Float32Array([0]),
+      };
+      return decodedAudio;
+    }
+
+    async close(): Promise<void> {}
+  }
+  Object.defineProperty(window, "MediaRecorder", { configurable: true, value: RecordingMediaRecorder });
+  Object.defineProperty(window, "AudioContext", { configurable: true, value: TestAudioContext });
+  Object.defineProperty(navigator, "mediaDevices", {
+    configurable: true,
+    value: {
+      getUserMedia: vi.fn().mockResolvedValue({ getTracks: () => [{ stop: vi.fn() }] }),
+    },
+  });
+}
+
+describe("Luna Bot connected desktop shell", () => {
+  beforeEach(() => {
+    emitAgentEvent = undefined;
+    emitAttachmentImport = undefined;
+    emitBrowserPictureInPicture = undefined;
+    emitUpdateStatus = undefined;
+    emitDynamicIslandAction = undefined;
+    window.localStorage.clear();
+    Object.defineProperty(window, "matchMedia", {
+      configurable: true,
+      value: defaultMatchMedia,
+    });
+    Object.defineProperty(window, "innerWidth", { configurable: true, value: 1024 });
+    Object.defineProperty(document, "hasFocus", {
+      configurable: true,
+      value: vi.fn(() => true),
+    });
+    Object.defineProperty(navigator, "mediaDevices", {
+      configurable: true,
+      value: { getUserMedia: vi.fn().mockRejectedValue(new DOMException("Denied", "NotAllowedError")) },
+    });
+    Object.defineProperty(window, "lunabot", {
+      configurable: true,
+      value: {
+        getAppInfo: vi.fn().mockResolvedValue({
+          name: "Luna Bot",
+          version: "0.1.0",
+          platform: "darwin",
+          variant: "production",
+        }),
+        getSetupState: vi.fn().mockResolvedValue({ completed: true, preferredProvider: "codex" }),
+        dynamicIsland: {
+          getPreference: vi.fn().mockResolvedValue({
+            enabled: true,
+            hapticsEnabled: true,
+            idleVisible: true,
+            additionalDisplaysEnabled: true,
+          }),
+          setPreference: vi.fn(async (preference) => ({ ...preference })),
+          publishPresentation: vi.fn().mockResolvedValue(undefined),
+          getPresentation: vi.fn().mockResolvedValue(null),
+          onPreference: vi.fn().mockReturnValue(() => undefined),
+          onPresentation: vi.fn().mockReturnValue(() => undefined),
+          onGeometry: vi.fn().mockReturnValue(() => undefined),
+          performAction: vi.fn().mockResolvedValue(undefined),
+          performHaptic: vi.fn().mockResolvedValue(undefined),
+          onAction: vi.fn((listener) => {
+            emitDynamicIslandAction = listener;
+            return () => undefined;
+          }),
+          setInteractive: vi.fn().mockResolvedValue(undefined),
+        },
+        agentPreferences: {
+          getMemoryLimit: vi.fn().mockResolvedValue(64),
+          setMemoryLimit: vi.fn(async (limit) => limit),
+          getClaudeCompactWindow: vi.fn().mockResolvedValue(null),
+          setClaudeCompactWindow: vi.fn(async (tokens) => tokens),
+          getBusyMessageMode: vi.fn().mockResolvedValue("queue"),
+          setBusyMessageMode: vi.fn(async (mode) => mode),
+          getWindowCloseBehavior: vi.fn().mockResolvedValue("ask"),
+          setWindowCloseBehavior: vi.fn(async (behavior) => behavior),
+          getApprovalPolicy: vi.fn().mockResolvedValue("ask"),
+          setApprovalPolicy: vi.fn(async ({ mode }) => mode),
+        },
+        saveSetup: vi.fn().mockImplementation(async ({ preferredProvider }) => ({
+          completed: true,
+          preferredProvider,
+        })),
+        getComputerUseMacSetupState: vi.fn().mockResolvedValue({
+          status: "available",
+          helperName: "Codex Computer Use",
+          helperIconDataUrl: null,
+          message: null,
+        }),
+        openComputerUsePermissionSetup: vi.fn().mockResolvedValue({
+          status: "available",
+          helperName: "Codex Computer Use",
+          helperIconDataUrl: null,
+          message: null,
+        }),
+        startComputerUseHelperDrag: vi.fn().mockResolvedValue(undefined),
+        revealComputerUseHelper: vi.fn().mockResolvedValue(undefined),
+        closeComputerUsePermissionSetup: vi.fn().mockResolvedValue(undefined),
+        openExternal: vi.fn().mockResolvedValue(undefined),
+        connectChatGPT: vi.fn().mockResolvedValue({
+          phase: "blocked",
+          cliVersion: "0.149.1",
+          auth: { kind: "unknown" },
+          providers: [
+            {
+              id: "codex",
+              state: "sign-in-required",
+              connectionState: "connecting",
+              version: "0.149.1",
+              message: null,
+            },
+            { id: "claude", state: "sign-in-required", version: "2.1.246", message: null },
+          ],
+          capabilities: { chat: "unavailable", browser: "ready", computerUse: "unavailable" },
+          message: null,
+          fullAccess: true,
+        }),
+        connectClaude: vi.fn().mockResolvedValue({
+          phase: "blocked",
+          cliVersion: "2.1.246",
+          auth: { kind: "unknown" },
+          providers: [
+            { id: "codex", state: "sign-in-required", version: "0.149.1", message: null },
+            {
+              id: "claude",
+              state: "sign-in-required",
+              connectionState: "connecting",
+              version: "2.1.246",
+              message: null,
+            },
+          ],
+          capabilities: { chat: "unavailable", browser: "ready", computerUse: "unavailable" },
+          message: null,
+          fullAccess: true,
+        }),
+        connectGrok: vi.fn().mockResolvedValue({
+          phase: "blocked",
+          cliVersion: "1.0.5",
+          auth: { kind: "unknown" },
+          providers: [
+            { id: "codex", state: "sign-in-required", version: "0.149.1", message: null },
+            { id: "claude", state: "sign-in-required", version: "2.1.246", message: null },
+            {
+              id: "grok",
+              state: "sign-in-required",
+              connectionState: "connecting",
+              version: "1.0.5",
+              message: null,
+            },
+          ],
+          capabilities: { chat: "unavailable", browser: "ready", computerUse: "unavailable" },
+          message: null,
+          fullAccess: true,
+        }),
+        refreshAgentProviders: vi.fn().mockResolvedValue({
+          phase: "ready",
+          cliVersion: "0.144.1",
+          auth: { kind: "chatgpt", email: "user@example.com" },
+          providers: [
+            {
+              id: "codex",
+              state: "available",
+              version: "0.144.1",
+              message: null,
+              email: "user@example.com",
+            },
+            {
+              id: "claude",
+              state: "available",
+              version: "2.1.231",
+              message: null,
+              email: "claude@example.com",
+            },
+          ],
+          capabilities: { chat: "ready", browser: "ready", computerUse: "ready" },
+          message: null,
+          fullAccess: true,
+        }),
+        providerRuntimes: {
+          getStatus: vi.fn().mockResolvedValue({ providers: [] }),
+          download: vi.fn().mockResolvedValue({ providers: [] }),
+          cancel: vi.fn().mockResolvedValue({ providers: [] }),
+          onEvent: vi.fn(() => () => undefined),
+        },
+        openUrl: vi.fn().mockResolvedValue(undefined),
+        voice: {
+          getModelStatus: vi.fn().mockResolvedValue({ phase: "ready", progress: 100, message: null }),
+          prepareModel: vi.fn().mockResolvedValue({ phase: "ready", progress: 100, message: null }),
+          transcribe: vi.fn().mockResolvedValue({ text: "Voice transcript" }),
+          onModelStatus: vi.fn().mockReturnValue(() => undefined),
+        },
+        agent: {
+          getStatus: vi.fn().mockResolvedValue({
+            phase: "ready",
+            cliVersion: "0.144.1",
+            auth: { kind: "chatgpt", email: "user@example.com" },
+            providers: [
+              {
+                id: "codex",
+                state: "available",
+                version: "0.144.1",
+                message: null,
+                email: "user@example.com",
+              },
+              {
+                id: "claude",
+                state: "available",
+                version: "2.1.231",
+                message: null,
+                email: "claude@example.com",
+              },
+            ],
+            capabilities: { chat: "ready", browser: "ready", computerUse: "ready" },
+            message: null,
+            fullAccess: true,
+          }),
+          getUsage: vi.fn().mockResolvedValue({
+            limits: [
+              {
+                id: "codex",
+                primary: { usedPercent: 28, windowDurationMins: 300, resetsAt: 1_786_563_600 },
+                secondary: {
+                  usedPercent: 41,
+                  windowDurationMins: 10_080,
+                  resetsAt: 1_787_040_000,
+                },
+              },
+            ],
+          }),
+          listModels: vi.fn().mockResolvedValue([
+            {
+              provider: "codex",
+              id: "gpt-5.6-luna",
+              name: "Luna",
+              description: "Fast and efficient for everyday agent work.",
+              defaultReasoningEffort: "medium",
+              supportedReasoningEfforts: ["low", "medium", "high"],
+            },
+            {
+              provider: "codex",
+              id: "gpt-5.6-terra",
+              name: "Terra",
+              description: "Balanced speed and capability for involved tasks.",
+              defaultReasoningEffort: "medium",
+              supportedReasoningEfforts: ["medium", "high"],
+            },
+            {
+              provider: "codex",
+              id: "gpt-5.6-sol",
+              name: "Sol",
+              description: "Most capable for complex, long-running work.",
+              defaultReasoningEffort: "high",
+              supportedReasoningEfforts: ["medium", "high", "xhigh"],
+            },
+            {
+              provider: "claude",
+              id: "claude-opus-5-5",
+              name: "Claude Opus 5.5",
+              description: "Most capable Claude model for complex work.",
+              defaultReasoningEffort: "high",
+              supportedReasoningEfforts: ["low", "medium", "high"],
+            },
+            {
+              provider: "claude",
+              id: "claude-sonnet-5-5",
+              name: "Claude Sonnet 5.5",
+              description: "Balanced Claude model for general agent work.",
+              defaultReasoningEffort: "high",
+              supportedReasoningEfforts: ["low", "medium", "high"],
+            },
+            {
+              provider: "claude",
+              id: "claude-haiku-5-5",
+              name: "Claude Haiku 5.5",
+              description: "Quick Claude model for lightweight tasks.",
+              defaultReasoningEffort: "medium",
+              supportedReasoningEfforts: ["low", "medium", "high"],
+            },
+          ]),
+          listBots: vi.fn().mockResolvedValue(BOTS),
+          listMemories: vi.fn().mockResolvedValue([]),
+          listRoutines: vi.fn().mockResolvedValue([]),
+          listRoutineRuns: vi.fn().mockResolvedValue([]),
+          createMemory: vi.fn().mockImplementation(async (input) => ({
+            id: "memory-new",
+            botId: input.botId,
+            text: input.text,
+            origin: "manual",
+            sourceTurnId: null,
+            createdAt: "2026-08-25T12:00:00.000Z",
+            updatedAt: "2026-08-25T12:00:00.000Z",
+          })),
+          updateMemory: vi.fn().mockImplementation(async (input) => ({
+            id: input.memoryId,
+            botId: input.botId,
+            text: input.text,
+            origin: "manual",
+            sourceTurnId: null,
+            createdAt: "2026-08-25T12:00:00.000Z",
+            updatedAt: "2026-08-25T12:01:00.000Z",
+          })),
+          deleteMemory: vi.fn().mockResolvedValue(undefined),
+          clearMemories: vi.fn().mockResolvedValue(undefined),
+          getSidebarLayout: vi.fn().mockResolvedValue({
+            revision: 0,
+            sections: [],
+            order: ["people", "unassigned"],
+            agentAssignments: {},
+            agentOrder: [],
+            hiddenAgentIds: [],
+          }),
+          mutateSidebarLayout: vi.fn().mockResolvedValue({
+            revision: 1,
+            sections: [],
+            order: ["people", "unassigned"],
+            agentAssignments: {},
+            agentOrder: [],
+            hiddenAgentIds: [],
+          }),
+          createBot: vi.fn().mockImplementation(async (input) => ({
+            ...BOTS[0],
+            id: "bot-new",
+            name: input.name,
+            title: "",
+            description: input.description,
+            avatarSeed: input.avatarSeed,
+            avatarHue: input.avatarHue,
+          })),
+          duplicateBot: vi.fn().mockImplementation(async (botId) => {
+            const source = BOTS.find((bot) => bot.id === botId) ?? BOTS[0];
+            const bot = {
+              ...source,
+              id: `${botId}-copy`,
+              name: `${source.name} copy`,
+              threadId: null,
+              workspacePath: `/tmp/LunaBot/Bots/${botId}-copy`,
+              preview: "No messages yet",
+              updatedAt: null,
+            };
+            return {
+              bot,
+              layout: {
+                revision: 1,
+                sections: [],
+                order: ["people", "unassigned"],
+                agentAssignments: {},
+                agentOrder: ["chief", "sales-outbound", bot.id],
+              },
+            };
+          }),
+          updateBot: vi.fn().mockImplementation(async (input) => ({
+            ...BOTS.find((bot) => bot.id === input.botId),
+            ...input,
+          })),
+          setAvatar: vi.fn().mockImplementation(async (input) => ({
+            ...BOTS.find((bot) => bot.id === input.botId),
+            avatarUrl: input.image ? "lunabot-avatar://agent/chief?v=test" : null,
+          })),
+          deleteBot: vi.fn().mockResolvedValue(undefined),
+          readConversation: vi.fn().mockImplementation(async (botId) => ({
+            botId,
+            threadId: null,
+            activeTurnId: null,
+            revision: 0,
+            messages: [],
+            readState: { unreadCount: 0, firstUnreadMessageId: null, throughMessageId: null },
+          })),
+          readConversationPage: vi.fn().mockImplementation(async (input) => {
+            const snapshot = await window.lunabot.agent.readConversation(input.botId);
+            const messages = snapshot.messages.slice(-Math.min(input.limit ?? 50, 100));
+            return {
+              ...snapshot,
+              messages,
+              references: {},
+              pageInfo: { hasOlder: snapshot.messages.length > messages.length, olderCursor: null },
+            };
+          }),
+          searchConversationMessages: vi.fn().mockResolvedValue({ results: [], total: 0, nextCursor: null }),
+          listConversationReads: vi.fn().mockResolvedValue({}),
+          markConversationRead: vi.fn().mockImplementation(async (input) => ({
+            unreadCount: 0,
+            firstUnreadMessageId: null,
+            throughMessageId: input.throughMessageId,
+          })),
+          chooseAttachments: vi.fn().mockResolvedValue([]),
+          onAttachmentImport: vi.fn((listener) => {
+            emitAttachmentImport = listener;
+            return () => undefined;
+          }),
+          discardDraftAttachment: vi.fn().mockResolvedValue(undefined),
+          openAttachment: vi.fn().mockResolvedValue(undefined),
+          openSharedFile: vi.fn().mockResolvedValue(undefined),
+          openWorkspaceFile: vi.fn().mockResolvedValue(undefined),
+          previewSharedFile: vi.fn().mockResolvedValue({
+            name: "preview.md",
+            size: 9,
+            mimeType: "text/plain",
+            previewKind: "markdown",
+            bytes: new TextEncoder().encode("# Preview"),
+          }),
+          previewWorkspaceFile: vi.fn().mockResolvedValue({
+            name: "preview.md",
+            size: 9,
+            mimeType: "text/plain",
+            previewKind: "markdown",
+            bytes: new TextEncoder().encode("# Preview"),
+          }),
+          sendMessage: vi.fn().mockResolvedValue({
+            messageId: "message-1",
+            deliveries: [{ id: "delivery-1", recipientBotId: "chief", status: "queued", position: 1 }],
+          }),
+          setMessageReaction: vi.fn().mockResolvedValue(undefined),
+          listQueue: vi.fn().mockImplementation(async (botId) => ({ botId, deliveries: [] })),
+          acknowledgeFailedTurn: vi.fn().mockResolvedValue(undefined),
+          cancelQueuedMessage: vi.fn().mockResolvedValue(undefined),
+          steerQueuedMessage: vi.fn().mockResolvedValue(undefined),
+          updateQueuedMessage: vi.fn().mockResolvedValue(undefined),
+          reorderQueue: vi.fn().mockResolvedValue(undefined),
+          interrupt: vi.fn().mockResolvedValue(undefined),
+          respondToPrompt: vi.fn().mockResolvedValue(undefined),
+          respondToApproval: vi.fn().mockResolvedValue(undefined),
+          respondToBrowserTakeover: vi.fn().mockResolvedValue(undefined),
+          onEvent: vi.fn((listener) => {
+            emitAgentEvent = listener;
+            return () => undefined;
+          }),
+        },
+        browser: {
+          open: vi.fn().mockResolvedValue(undefined),
+          activate: vi.fn().mockResolvedValue(undefined),
+          navigate: vi.fn().mockResolvedValue(undefined),
+          reload: vi.fn().mockResolvedValue(undefined),
+          close: vi.fn().mockResolvedValue(undefined),
+          listTabs: vi.fn().mockResolvedValue([]),
+          getDisplayState: vi.fn().mockResolvedValue({ tabs: [], activeTabId: null }),
+          getControlState: vi.fn().mockResolvedValue({ sessions: [] }),
+          capturePreview: vi.fn().mockResolvedValue({
+            dataUrl: "data:image/jpeg;base64,YWJj",
+            width: 960,
+            height: 600,
+          }),
+          setVisible: vi.fn().mockResolvedValue(undefined),
+          onDisplayState: vi.fn().mockReturnValue(() => undefined),
+          openPictureInPicture: vi
+            .fn()
+            .mockImplementation(async (bounds) => bounds ?? { x: 900, y: 500, width: 420, height: 300 }),
+          closePictureInPicture: vi.fn().mockResolvedValue(undefined),
+          dockPictureInPicture: vi.fn().mockResolvedValue(undefined),
+          hidePictureInPicture: vi.fn().mockResolvedValue(undefined),
+          onPictureInPictureEvent: vi.fn((listener) => {
+            emitBrowserPictureInPicture = listener;
+            return () => undefined;
+          }),
+        },
+        update: {
+          getStatus: vi.fn().mockResolvedValue({
+            phase: "idle",
+            currentVersion: "0.1.0",
+            availableVersion: null,
+            progress: null,
+            checkedAt: null,
+            message: null,
+          }),
+          check: vi.fn().mockResolvedValue({
+            phase: "up-to-date",
+            currentVersion: "0.1.0",
+            availableVersion: null,
+            progress: null,
+            checkedAt: "2026-08-12T22:00:00.000Z",
+            message: null,
+          }),
+          download: vi.fn().mockResolvedValue({
+            phase: "downloading",
+            currentVersion: "0.1.0",
+            availableVersion: "0.2.0",
+            progress: 0,
+            checkedAt: "2026-08-12T22:00:00.000Z",
+            message: null,
+          }),
+          install: vi.fn().mockResolvedValue(undefined),
+          getPreference: vi.fn().mockResolvedValue({ autoDownload: true }),
+          setPreference: vi.fn(async (input) => input),
+          onEvent: vi.fn((listener) => {
+            emitUpdateStatus = listener;
+            return () => undefined;
+          }),
+        },
+        maintenance: {
+          exportData: vi.fn().mockResolvedValue({ saved: true }),
+          exportDiagnostics: vi.fn().mockResolvedValue({ saved: true }),
+        },
+      },
+    });
+  });
+
+  it("opens routine settings from a persisted routine event marker", async () => {
+    const routine = {
+      id: "routine-1",
+      botId: "chief",
+      name: "Morning brief",
+      instruction: "Prepare the daily brief.",
+      active: true,
+      timezone: "UTC",
+      trigger: {
+        id: "trigger-1",
+        routineId: "routine-1",
+        schedule: { kind: "daily", time: "09:00" } as const,
+        nextRunAt: "2026-09-01T09:00:00.000Z",
+        createdAt: "2026-08-31T09:00:00.000Z",
+        updatedAt: "2026-08-31T09:00:00.000Z",
+      },
+      createdAt: "2026-08-31T09:00:00.000Z",
+      updatedAt: "2026-08-31T09:00:00.000Z",
+    };
+    vi.mocked(window.lunabot.agent.listRoutines).mockResolvedValue([routine]);
+    vi.mocked(window.lunabot.agent.readConversation).mockResolvedValue(
+      testConversationPage("chief", [
+        {
+          id: "routine-event-1",
+          author: "system",
+          source: "system",
+          text: routine.name,
+          createdAt: "2026-08-31T10:00:00.000Z",
+          status: "completed",
+          itemType: routineConversationEventItemType("created", routine.id),
+        },
+      ]),
+    );
+
+    render(() => <App />);
+
+    const marker = await screen.findByRole("button", { name: "Open routine Morning brief" });
+    await fireEvent.click(marker);
+    expect(await screen.findByRole("textbox", { name: "Name" }, { timeout: 3000 })).toHaveValue("Morning brief");
+    expect(window.lunabot.agent.listRoutineRuns).toHaveBeenCalledWith({
+      botId: "chief",
+      routineId: routine.id,
+      limit: 10,
+    });
+  });
+
+  it("keeps an old routine marker unavailable when paginated history omits its deletion", async () => {
+    vi.mocked(window.lunabot.agent.listRoutines).mockResolvedValue([]);
+    vi.mocked(window.lunabot.agent.readConversation).mockResolvedValue(
+      testConversationPage("chief", [
+        {
+          id: "old-routine-event",
+          author: "system",
+          source: "system",
+          text: "Archived brief",
+          createdAt: "2026-08-30T10:00:00.000Z",
+          status: "completed",
+          itemType: routineConversationEventItemType("updated", "deleted-routine"),
+        },
+      ]),
+    );
+
+    render(() => <App />);
+
+    expect(await screen.findByText("Archived brief")).toBeInTheDocument();
+    await waitFor(() => expect(window.lunabot.agent.listRoutines).toHaveBeenCalledWith("chief"));
+    expect(screen.queryByRole("button", { name: "Open routine Archived brief" })).not.toBeInTheDocument();
+  });
+
+  it("preserves omitted attention only when a compact runtime snapshot is incomplete", async () => {
+    render(() => <App />);
+    await screen.findByRole("heading", { name: "Chief" });
+    await confirmOnboardingModel();
+    await waitFor(() => expect(window.lunabot.agent.listQueue).toHaveBeenCalledWith("chief"));
+
+    emitAgentEvent?.({
+      type: "queue-changed",
+      snapshot: {
+        botId: "chief",
+        deliveries: [
+          queuedDelivery("delivery-running", "Keep the full queue", null, {
+            status: "running",
+            turnId: "turn-running",
+          }),
+        ],
+      },
+    });
+    emitAgentEvent?.({
+      type: "prompt",
+      requestId: "prompt-authoritative",
+      botId: "chief",
+      threadId: "thread-chief",
+      turnId: "turn-running",
+      questions: [
+        {
+          id: "scope",
+          header: "Scope",
+          question: "Which scope?",
+          isSecret: false,
+          options: null,
+        },
+      ],
+    });
+
+    expect(await screen.findByRole("status", { name: "Chief is working" })).toBeInTheDocument();
+    expect(await screen.findByRole("textbox", { name: "Write your own answer to Which scope?" })).toBeInTheDocument();
+
+    const runtimeSnapshot: AgentEvent = {
+      type: "runtime-snapshot",
+      snapshot: {
+        bots: [],
+        activeTurns: [{ botId: "chief", threadId: "thread-chief", turnId: "turn-running" }],
+        work: [],
+        latestMessages: [],
+        attentionComplete: false,
+        pendingPrompts: [],
+        pendingApprovals: [],
+        pendingBrowserTakeovers: [],
+        failedTurns: [],
+      },
+    };
+    emitAgentEvent?.(runtimeSnapshot);
+
+    expect(screen.getByRole("status", { name: "Chief is working" })).toBeInTheDocument();
+    expect(screen.getByRole("textbox", { name: "Write your own answer to Which scope?" })).toBeInTheDocument();
+
+    emitAgentEvent?.({
+      ...runtimeSnapshot,
+      snapshot: { ...runtimeSnapshot.snapshot, activeTurns: [], attentionComplete: true },
+    });
+    await waitFor(() =>
+      expect(screen.queryByRole("textbox", { name: "Write your own answer to Which scope?" })).not.toBeInTheDocument(),
+    );
+    await waitFor(() => expect(screen.queryByRole("status", { name: "Chief is working" })).not.toBeInTheDocument());
+  });
+
+  it("connects Claude and Grok from the Settings providers list", async () => {
+    vi.mocked(window.lunabot.agent.getStatus).mockResolvedValue({
+      phase: "blocked",
+      cliVersion: null,
+      auth: { kind: "unknown" },
+      providers: [
+        { id: "codex", state: "sign-in-required", version: "0.149.1", message: null },
+        { id: "claude", state: "sign-in-required", version: "2.1.246", message: null },
+        { id: "grok", state: "sign-in-required", version: "1.0.5", message: null },
+      ],
+      capabilities: { chat: "unavailable", browser: "ready", computerUse: "unavailable" },
+      message: "Install a provider.",
+      fullAccess: true,
+    });
+    vi.mocked(window.lunabot.connectClaude).mockResolvedValueOnce({
+      phase: "blocked",
+      cliVersion: "2.1.246",
+      auth: { kind: "unknown" },
+      providers: [
+        { id: "codex", state: "sign-in-required", version: "0.149.1", message: null },
+        { id: "claude", state: "sign-in-required", connectionState: "connecting", version: "2.1.246", message: null },
+        { id: "grok", state: "sign-in-required", version: "1.0.5", message: null },
+      ],
+      capabilities: { chat: "unavailable", browser: "ready", computerUse: "unavailable" },
+      message: "Install a provider.",
+      fullAccess: true,
+    });
+    render(() => <App />);
+    const dialog = await openSettingsProviders();
+
+    await fireEvent.click(within(dialog).getByRole("button", { name: "Connect Claude" }));
+    expect(window.lunabot.connectClaude).toHaveBeenCalledTimes(1);
+    expect(within(dialog).getByRole("button", { name: "Restart Claude" })).toBeEnabled();
+    await fireEvent.click(within(dialog).getByRole("button", { name: "Connect Grok" }));
+    expect(window.lunabot.connectGrok).toHaveBeenCalledTimes(1);
+    expect(within(dialog).getByRole("button", { name: "Restart Grok" })).toBeEnabled();
+  });
+
+  it("refreshes provider status from Providers & permissions", async () => {
+    render(() => <App />);
+    await screen.findByRole("heading", { name: "Chief" });
+    const dialog = await openProvidersDialog();
+    const statusRequests = vi.mocked(window.lunabot.agent.getStatus).mock.calls.length;
+
+    await fireEvent.click(within(dialog).getByRole("button", { name: "Refresh providers" }));
+
+    await waitFor(() => expect(window.lunabot.agent.getStatus).toHaveBeenCalledTimes(statusRequests + 1));
+  });
+
+  it("shows a provider-specific warning when Refresh cannot verify an existing connection", async () => {
+    vi.mocked(window.lunabot.agent.getStatus).mockResolvedValueOnce({
+      phase: "ready",
+      cliVersion: "0.149.1",
+      auth: { kind: "chatgpt", email: "user@example.com" },
+      providers: [
+        {
+          id: "codex",
+          state: "available",
+          version: "0.149.1",
+          message: null,
+          email: "user@example.com",
+          checkError: "Could not verify Codex. Keeping the existing connection.",
+        },
+      ],
+      capabilities: { chat: "ready", browser: "ready", computerUse: "ready" },
+      message: null,
+      fullAccess: true,
+    });
+    render(() => <App />);
+    await screen.findByRole("heading", { name: "Chief" });
+    const dialog = await openSettingsProviders();
+
+    expect(await within(dialog).findByText("Could not verify Codex. Keeping the existing connection.")).toBeVisible();
+    expect(within(dialog).getByRole("button", { name: "Reconnect ChatGPT" })).toBeEnabled();
+  });
+
+  it("shows a native Codex login failure reported after the browser opens", async () => {
+    vi.mocked(window.lunabot.agent.getStatus).mockResolvedValue({
+      phase: "blocked",
+      cliVersion: null,
+      auth: { kind: "unknown" },
+      providers: [
+        { id: "codex", state: "sign-in-required", version: "0.149.1", message: null },
+        { id: "claude", state: "sign-in-required", version: "2.1.246", message: null },
+      ],
+      capabilities: { chat: "unavailable", browser: "ready", computerUse: "unavailable" },
+      message: "Install a provider.",
+      fullAccess: true,
+    });
+    render(() => <App />);
+    const dialog = await openSettingsProviders();
+
+    await fireEvent.click(within(dialog).getByRole("button", { name: "Connect ChatGPT" }));
+    expect(within(dialog).getByRole("button", { name: "Restart ChatGPT" })).toBeEnabled();
+
+    emitAgentEvent?.({
+      type: "status",
+      status: {
+        phase: "blocked",
+        cliVersion: null,
+        auth: { kind: "unknown" },
+        providers: [
+          {
+            id: "codex",
+            state: "sign-in-required",
+            version: "0.149.1",
+            message: "Codex connection timed out. Try again.",
+          },
+          { id: "claude", state: "sign-in-required", version: "2.1.246", message: "Sign in to Claude." },
+        ],
+        capabilities: { chat: "unavailable", browser: "ready", computerUse: "unavailable" },
+        message: "Codex connection timed out. Try again.",
+        fullAccess: true,
+      },
+    });
+
+    expect(await screen.findByText("Codex connection timed out. Try again.")).toBeInTheDocument();
+    expect(within(dialog).getByRole("button", { name: "Connect ChatGPT" })).toBeEnabled();
+  });
+
+  it("lets the user review providers and permissions from the account menu", async () => {
+    render(() => <App />);
+    await screen.findByRole("heading", { name: "Chief" });
+
+    const dialog = await openProvidersDialog();
+    const providers = within(dialog).getByRole("radiogroup", { name: "Default provider" });
+    expect(within(providers).getByRole("radio", { name: /^Codex/ })).toBeChecked();
+    expect(within(providers).getByText("user@example.com")).toBeInTheDocument();
+    expect(within(providers).getByText("claude@example.com")).toBeInTheDocument();
+    expect(screen.queryByRole("checkbox")).not.toBeInTheDocument();
+    await fireEvent.click(within(providers).getByRole("radio", { name: /^Claude/ }));
+    await fireEvent.click(within(dialog).getByRole("button", { name: "Save changes" }));
+    expect(window.lunabot.saveSetup).toHaveBeenLastCalledWith({ preferredProvider: "claude" });
+    expect(screen.queryByRole("dialog", { name: "Providers & permissions" })).not.toBeInTheDocument();
+  });
+
+  it("opens the required first-Bot setup for a new user", async () => {
+    vi.mocked(window.lunabot.agent.listBots).mockResolvedValueOnce([]);
+    render(() => <App />);
+
+    expect(await screen.findByRole("heading", { name: "Create a Bot your way" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Create Bot" })).toBeDisabled();
+    expect(screen.queryByRole("button", { name: "Cancel" })).not.toBeInTheDocument();
+    expect(window.lunabot.agent.createBot).not.toHaveBeenCalled();
+  });
+
+  it("keeps the Providers dialog open when saving the provider choice fails", async () => {
+    vi.mocked(window.lunabot.saveSetup).mockRejectedValueOnce(new Error("Could not save setup."));
+    render(() => <App />);
+    await screen.findByRole("heading", { name: "Chief" });
+    const dialog = await openProvidersDialog();
+
+    await fireEvent.click(within(dialog).getByRole("radio", { name: /^Claude/ }));
+    await fireEvent.click(within(dialog).getByRole("button", { name: "Save changes" }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("Could not save setup.");
+    expect(within(dialog).getByRole("button", { name: "Save changes" })).toBeInTheDocument();
+  });
+
+  it("shows focused weekly usage and compact account actions", async () => {
+    render(() => <App />);
+    await waitFor(() => expect(window.lunabot.agent.getUsage).toHaveBeenCalledTimes(1));
+    const usageButton = await screen.findByRole("button", { name: "Weekly usage, 59% left" });
+    expect(screen.getByRole("complementary", { name: "Bot navigation" })).not.toContainElement(usageButton);
+
+    await fireEvent.click(usageButton);
+    const usageDialog = screen.getByRole("dialog", { name: "Weekly usage" });
+    const usageProgress = within(usageDialog).getByRole("progressbar", { name: "Weekly usage remaining" });
+    expect(usageProgress).toHaveAttribute("aria-valuenow", "59");
+    expect(usageProgress).toHaveAttribute("aria-valuetext", "59% left");
+    expect(within(usageDialog).getByText("59%")).toBeInTheDocument();
+    expect(within(usageDialog).getByText("Resets")).toBeInTheDocument();
+    await fireEvent.click(within(usageDialog).getByRole("button", { name: "Refresh" }));
+    await waitFor(() => expect(window.lunabot.agent.getUsage).toHaveBeenCalledTimes(2));
+    expect(screen.queryByText(/ChatGPT Pro/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Developer preview/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Lifetime/i)).not.toBeInTheDocument();
+
+    await fireEvent.keyDown(usageDialog, { key: "Escape" });
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: "Weekly usage" })).not.toBeInTheDocument());
+    await waitFor(() => expect(usageButton).toHaveFocus());
+
+    const accountButton = screen.getByRole("button", { name: "Open account actions" });
+    await fireEvent.click(accountButton);
+    const accountDialog = screen.getByRole("dialog", { name: "Account actions" });
+    expect(within(accountDialog).getByRole("button", { name: /Check for updates/ })).toBeInTheDocument();
+    expect(within(accountDialog).getByRole("button", { name: "Providers & permissions" })).toBeInTheDocument();
+    expect(within(accountDialog).queryByText("person@example.com")).not.toBeInTheDocument();
+    expect(within(accountDialog).queryByRole("button", { name: /photo/i })).not.toBeInTheDocument();
+    expect(within(accountDialog).queryByRole("button", { name: "Settings" })).not.toBeInTheDocument();
+    expect(within(accountDialog).queryByText("Weekly usage")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Export data" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Export diagnostics" })).not.toBeInTheDocument();
+
+    await fireEvent.keyDown(accountDialog, { key: "Escape" });
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: "Account actions" })).not.toBeInTheDocument());
+    await waitFor(() => expect(accountButton).toHaveFocus());
+  });
+
+  it("opens global settings from the dock and restores focus after every close path", async () => {
+    render(() => <App />);
+    const settingsButton = await screen.findByRole("button", { name: "Settings" });
+
+    await fireEvent.click(settingsButton);
+    let dialog = await screen.findByRole("dialog", { name: "General" });
+    const launchSwitch = within(dialog).getByRole("switch", { name: "Launch Luna Bot at login" });
+    await fireEvent.click(launchSwitch);
+    expect(launchSwitch).not.toBeChecked();
+
+    await fireEvent.click(within(dialog).getByRole("button", { name: "Close settings" }));
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: "General" })).not.toBeInTheDocument());
+    await waitFor(() => expect(settingsButton).toHaveFocus());
+
+    await fireEvent.click(settingsButton);
+    dialog = await screen.findByRole("dialog", { name: "General" });
+    expect(within(dialog).getByRole("switch", { name: "Launch Luna Bot at login" })).not.toBeChecked();
+    await fireEvent.keyDown(dialog, { key: "Escape" });
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: "General" })).not.toBeInTheDocument());
+    await waitFor(() => expect(settingsButton).toHaveFocus());
+
+    await fireEvent.click(settingsButton);
+    await screen.findByRole("dialog", { name: "General" });
+    await fireEvent.pointerDown(screen.getByTestId("settings-modal-backdrop"), { button: 0 });
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: "General" })).not.toBeInTheDocument());
+    await waitFor(() => expect(settingsButton).toHaveFocus());
+  });
+
+  it("persists the MacBook notch preference from settings on macOS", async () => {
+    render(() => <App />);
+    await fireEvent.click(await screen.findByRole("button", { name: "Settings" }));
+    const notchSwitch = await screen.findByRole("switch", { name: "Display status around the MacBook notch" });
+    expect(notchSwitch).toBeChecked();
+
+    await fireEvent.click(notchSwitch);
+
+    await waitFor(() =>
+      expect(window.lunabot.dynamicIsland.setPreference).toHaveBeenCalledWith({
+        enabled: false,
+        hapticsEnabled: true,
+        idleVisible: true,
+        additionalDisplaysEnabled: true,
+      }),
+    );
+    expect(notchSwitch).not.toBeChecked();
+  });
+
+  it("shows an available update, downloads it, and exposes restart to install", async () => {
+    vi.mocked(window.lunabot.update.getStatus).mockResolvedValueOnce({
+      phase: "available",
+      currentVersion: "0.1.0",
+      availableVersion: "0.2.0",
+      progress: null,
+      checkedAt: "2026-08-12T22:00:00.000Z",
+      message: null,
+      errorCode: null,
+    });
+    render(() => <App />);
+
+    expect(await screen.findByText("New update available")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Open account actions" }));
+    fireEvent.click(await screen.findByRole("button", { name: "A newer version is out. Get it now." }));
+    await waitFor(() => expect(window.lunabot.update.download).toHaveBeenCalledOnce());
+
+    emitUpdateStatus?.({
+      phase: "ready",
+      currentVersion: "0.1.0",
+      availableVersion: "0.2.0",
+      progress: 100,
+      checkedAt: "2026-08-12T22:00:00.000Z",
+      message: null,
+      errorCode: null,
+    });
+    fireEvent.click(await screen.findByRole("button", { name: "Ready: restart to finish updating." }));
+    await waitFor(() => expect(window.lunabot.update.install).toHaveBeenCalledOnce());
+  });
+
+  it("reports a returned update error as a failed action", async () => {
+    vi.mocked(window.lunabot.update.getStatus).mockResolvedValueOnce({
+      phase: "available",
+      currentVersion: "0.1.0",
+      availableVersion: "0.2.0",
+      progress: null,
+      checkedAt: null,
+      message: null,
+      errorCode: null,
+    });
+    vi.mocked(window.lunabot.update.download).mockResolvedValueOnce({
+      phase: "error",
+      currentVersion: "0.1.0",
+      availableVersion: "0.2.0",
+      progress: null,
+      checkedAt: "2026-08-12T22:00:00.000Z",
+      message: "We couldn't look for updates. Retry.",
+      errorCode: "download_failed",
+    });
+    render(() => <App />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Open account actions" }));
+    fireEvent.click(await screen.findByRole("button", { name: "A newer version is out. Get it now." }));
+
+    expect(
+      await screen.findByRole("button", { name: "Retry update. We couldn't look for updates. Retry." }),
+    ).toBeEnabled();
+  });
+
+  it("keeps the update retry visible when downloading rejects", async () => {
+    vi.mocked(window.lunabot.update.getStatus).mockResolvedValueOnce({
+      phase: "available",
+      currentVersion: "0.1.0",
+      availableVersion: "0.2.0",
+      progress: null,
+      checkedAt: null,
+      message: null,
+      errorCode: null,
+    });
+    vi.mocked(window.lunabot.update.download).mockRejectedValueOnce(new Error("Could not download update. Try again."));
+    render(() => <App />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "A newer version is out. Get it now." }));
+
+    expect(await screen.findByRole("button", { name: /Retry update.*Could not download update/ })).toBeEnabled();
+  });
+
+  it("retries a failed download instead of checking again", async () => {
+    vi.mocked(window.lunabot.update.getStatus).mockResolvedValueOnce({
+      phase: "error",
+      currentVersion: "0.1.0",
+      availableVersion: "0.2.0",
+      progress: null,
+      checkedAt: "2026-08-12T22:00:00.000Z",
+      message: "The update download failed. Retry.",
+      errorCode: "download_failed",
+    });
+    render(() => <App />);
+
+    fireEvent.click(await screen.findByRole("button", { name: /Retry update/ }));
+
+    await waitFor(() => expect(window.lunabot.update.download).toHaveBeenCalledOnce());
+    expect(window.lunabot.update.check).not.toHaveBeenCalled();
+  });
+
+  it("keeps a toggle made before the stored preference finishes loading", async () => {
+    let resolvePreference: ((value: { autoDownload: boolean }) => void) | undefined;
+    vi.mocked(window.lunabot.update.getPreference).mockReturnValueOnce(
+      new Promise((resolve) => {
+        resolvePreference = resolve;
+      }),
+    );
+    render(() => <App />);
+
+    await fireEvent.click(await screen.findByRole("button", { name: "Settings" }));
+    await fireEvent.click(await screen.findByRole("tab", { name: "Updates" }));
+    const toggle = await screen.findByRole("switch", { name: "Automatically download updates" });
+    await fireEvent.click(toggle);
+    await waitFor(() => expect(window.lunabot.update.setPreference).toHaveBeenCalledWith({ autoDownload: false }));
+
+    // The stored read finally lands with the value the user has just replaced. Painting it back would
+    // leave the switch disagreeing with both disk and the main process.
+    resolvePreference?.({ autoDownload: true });
+    // Let the hydration continuation actually run, otherwise this asserts before it could apply.
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(toggle).not.toBeChecked();
+  });
+
+  it("persists the automatic download preference", async () => {
+    vi.mocked(window.lunabot.update.getPreference).mockResolvedValue({ autoDownload: false });
+    render(() => <App />);
+
+    await fireEvent.click(await screen.findByRole("button", { name: "Settings" }));
+    await fireEvent.click(await screen.findByRole("tab", { name: "Updates" }));
+
+    const toggle = await screen.findByRole("switch", { name: "Automatically download updates" });
+    await waitFor(() => expect(toggle).not.toBeChecked());
+
+    await fireEvent.click(toggle);
+
+    await waitFor(() => expect(window.lunabot.update.setPreference).toHaveBeenCalledWith({ autoDownload: true }));
+  });
+
+  it("offers local voice prompting and explains blocked microphone access", async () => {
+    render(() => <App />);
+    await screen.findByRole("heading", { name: "Chief" });
+
+    await fireEvent.click(await screen.findByRole("button", { name: "Dictate your prompt" }));
+
+    await waitFor(() =>
+      expect(navigator.mediaDevices.getUserMedia).toHaveBeenCalledWith({ audio: true, video: false }),
+    );
+    expect(
+      await screen.findByText("Microphone access is blocked. Allow Luna Bot to use the microphone in system settings."),
+    ).toBeInTheDocument();
+  });
+
+  it("downloads the voice model before it requests microphone access", async () => {
+    let resolvePreparation: ((status: VoiceModelStatus) => void) | undefined;
+    let reportModelStatus: ((status: VoiceModelStatus) => void) | undefined;
+    vi.mocked(window.lunabot.voice.prepareModel).mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolvePreparation = resolve;
+        }),
+    );
+    vi.mocked(window.lunabot.voice.onModelStatus).mockImplementationOnce((listener) => {
+      reportModelStatus = listener;
+      return () => undefined;
+    });
+    render(() => <App />);
+
+    await screen.findByRole("heading", { name: "Chief" });
+    await fireEvent.click(await screen.findByRole("button", { name: "Dictate your prompt" }));
+    expect(navigator.mediaDevices.getUserMedia).not.toHaveBeenCalled();
+    reportModelStatus?.({ phase: "downloading", progress: 47, message: null });
+    await waitFor(() => {
+      expect(screen.getAllByRole("status").some((status) => status.textContent?.includes("47%"))).toBe(true);
+    });
+
+    resolvePreparation?.({ phase: "ready", progress: 100, message: null });
+    await waitFor(() => expect(navigator.mediaDevices.getUserMedia).toHaveBeenCalledOnce());
+  });
+
+  it("shows the recording timer and stop control while capturing voice", async () => {
+    class RecordingMediaRecorder extends EventTarget {
+      readonly mimeType = "audio/webm";
+      state: RecordingState = "inactive";
+
+      start(): void {
+        this.state = "recording";
+      }
+
+      stop(): void {
+        this.state = "inactive";
+        this.dispatchEvent(new Event("stop"));
+      }
+    }
+    Object.defineProperty(window, "MediaRecorder", { configurable: true, value: RecordingMediaRecorder });
+    Object.defineProperty(navigator, "mediaDevices", {
+      configurable: true,
+      value: {
+        getUserMedia: vi.fn().mockResolvedValue({ getTracks: () => [{ stop: vi.fn() }] }),
+      },
+    });
+    render(() => <App />);
+
+    await screen.findByRole("heading", { name: "Chief" });
+    await fireEvent.click(await screen.findByRole("button", { name: "Dictate your prompt" }));
+
+    const status = await screen.findByRole("group", { name: "Voice recording" });
+    expect(within(status).getByText("0:00")).toBeVisible();
+    expect(within(status).getByRole("button", { name: "Stop voice recording" })).toBeVisible();
+    expect(screen.queryByRole("button", { name: "Dictate your prompt" })).not.toBeInTheDocument();
+  });
+
+  it("sends the transcribed prompt when the send arrow is pressed during voice recording", async () => {
+    installVoiceRecordingMocks();
+    render(() => <App />);
+
+    await screen.findByRole("heading", { name: "Chief" });
+    await fireEvent.click(await screen.findByRole("button", { name: "Dictate your prompt" }));
+    await screen.findByRole("group", { name: "Voice recording" });
+    await fireEvent.click(screen.getByRole("button", { name: "Send voice message" }));
+
+    await waitFor(() => expect(window.lunabot.voice.transcribe).toHaveBeenCalledOnce());
+    await waitFor(() =>
+      expect(window.lunabot.agent.sendMessage).toHaveBeenCalledWith({
+        botId: "chief",
+        text: "Voice transcript",
+        attachmentDraftIds: [],
+      }),
+    );
+  });
+
+  it("submits the accepted voice snapshot and preserves later draft changes", async () => {
+    let resolveTranscription: ((result: { text: string }) => void) | undefined;
+    vi.mocked(window.lunabot.voice.transcribe).mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolveTranscription = resolve;
+        }),
+    );
+    installVoiceRecordingMocks();
+    render(() => <App />);
+
+    const composer = await screen.findByRole("textbox", { name: "Message Chief" });
+    composer.textContent = "Existing draft";
+    await fireEvent.input(composer);
+    await fireEvent.click(screen.getByRole("button", { name: "Dictate your prompt" }));
+    await screen.findByRole("group", { name: "Voice recording" });
+    await fireEvent.click(screen.getByRole("button", { name: "Send voice message" }));
+    await waitFor(() => expect(window.lunabot.voice.transcribe).toHaveBeenCalledOnce());
+
+    expect(composer).toHaveAttribute("aria-disabled", "true");
+    await fireEvent.keyDown(composer, { key: "Enter" });
+    expect(window.lunabot.agent.sendMessage).not.toHaveBeenCalled();
+    composer.textContent = "Later draft";
+    await fireEvent.input(composer);
+
+    resolveTranscription?.({ text: "Voice transcript" });
+    await waitFor(() =>
+      expect(window.lunabot.agent.sendMessage).toHaveBeenCalledWith({
+        botId: "chief",
+        text: "Existing draft Voice transcript",
+        attachmentDraftIds: [],
+      }),
+    );
+    expect(window.lunabot.agent.sendMessage).toHaveBeenCalledOnce();
+    await waitFor(() => expect(composer).toHaveTextContent("Later draft"));
+  });
+
+  it("finishes an accepted voice send for the original bot after the chat changes", async () => {
+    let resolveTranscription: ((result: { text: string }) => void) | undefined;
+    vi.mocked(window.lunabot.voice.transcribe).mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolveTranscription = resolve;
+        }),
+    );
+    installVoiceRecordingMocks();
+    render(() => <App />);
+
+    await screen.findByRole("heading", { name: "Chief" });
+    await fireEvent.click(await screen.findByRole("button", { name: "Dictate your prompt" }));
+    await screen.findByRole("group", { name: "Voice recording" });
+    await fireEvent.click(screen.getByRole("button", { name: "Send voice message" }));
+    await waitFor(() => expect(window.lunabot.voice.transcribe).toHaveBeenCalledOnce());
+    await fireEvent.click(screen.getByRole("button", { name: /Sales Outbound/ }));
+
+    resolveTranscription?.({ text: "Message for Chief" });
+    await waitFor(() =>
+      expect(window.lunabot.agent.sendMessage).toHaveBeenCalledWith({
+        botId: "chief",
+        text: "Message for Chief",
+        attachmentDraftIds: [],
+      }),
+    );
+  });
+
+  it("stores an ordinary voice transcript for the original bot after the chat changes", async () => {
+    let resolveTranscription: ((result: { text: string }) => void) | undefined;
+    vi.mocked(window.lunabot.voice.transcribe).mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolveTranscription = resolve;
+        }),
+    );
+    installVoiceRecordingMocks();
+    render(() => <App />);
+
+    await screen.findByRole("heading", { name: "Chief" });
+    await fireEvent.click(await screen.findByRole("button", { name: "Dictate your prompt" }));
+    const recording = await screen.findByRole("group", { name: "Voice recording" });
+    await fireEvent.click(within(recording).getByRole("button", { name: "Stop voice recording" }));
+    await waitFor(() => expect(window.lunabot.voice.transcribe).toHaveBeenCalledOnce());
+    await fireEvent.click(screen.getByRole("button", { name: /Sales Outbound/ }));
+
+    resolveTranscription?.({ text: "Draft for Chief" });
+    await screen.findByRole("button", { name: "Dictate your prompt" });
+    expect(window.lunabot.agent.sendMessage).not.toHaveBeenCalled();
+    await fireEvent.click(screen.getByRole("button", { name: /Chief/ }));
+    await waitFor(() =>
+      expect(screen.getByRole("textbox", { name: "Message Chief" })).toHaveTextContent("Draft for Chief"),
+    );
+  });
+
+  it("shows a deferred transcription error in the original chat", async () => {
+    let rejectTranscription: ((error: Error) => void) | undefined;
+    vi.mocked(window.lunabot.voice.transcribe).mockImplementationOnce(
+      () =>
+        new Promise((_resolve, reject) => {
+          rejectTranscription = reject;
+        }),
+    );
+    installVoiceRecordingMocks();
+    render(() => <App />);
+
+    const composer = await screen.findByRole("textbox", { name: "Message Chief" });
+    composer.textContent = "Retry me";
+    await fireEvent.input(composer);
+    await fireEvent.click(await screen.findByRole("button", { name: "Dictate your prompt" }));
+    await screen.findByRole("group", { name: "Voice recording" });
+    await fireEvent.click(screen.getByRole("button", { name: "Send voice message" }));
+    await waitFor(() => expect(window.lunabot.voice.transcribe).toHaveBeenCalledOnce());
+    await fireEvent.click(screen.getByRole("button", { name: /Sales Outbound/ }));
+
+    rejectTranscription?.(new Error("Transcription failed"));
+    await screen.findByRole("button", { name: "Dictate your prompt" });
+    expect(screen.queryByText("Transcription failed")).not.toBeInTheDocument();
+    await fireEvent.click(screen.getByRole("button", { name: /Chief/ }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("Transcription failed");
+    await fireEvent.click(screen.getByRole("button", { name: "Send message" }));
+    await waitFor(() => expect(screen.queryByText("Transcription failed")).not.toBeInTheDocument());
+  });
+
+  it("shows the voice-send arrow while an agent turn is active", async () => {
+    installVoiceRecordingMocks();
+    render(() => <App />);
+    await screen.findByRole("heading", { name: "Chief" });
+    emitAgentEvent?.({
+      type: "conversation",
+      snapshot: {
+        botId: "chief",
+        threadId: "thread-chief",
+        activeTurnId: "turn-active",
+        revision: 2,
+        messages: [],
+      },
+    });
+
+    await screen.findByRole("button", { name: "Stop agent" });
+    await fireEvent.click(screen.getByRole("button", { name: "Dictate your prompt" }));
+    await screen.findByRole("group", { name: "Voice recording" });
+    expect(screen.getByRole("button", { name: "Send voice message" })).toBeInTheDocument();
+  });
+
+  it("renders message links and opens them in the external browser", async () => {
+    vi.mocked(window.lunabot.agent.readConversation).mockResolvedValueOnce({
+      botId: "chief",
+      threadId: "thread-chief",
+      activeTurnId: null,
+      revision: 1,
+      messages: [
+        {
+          id: "linked-message",
+          author: "assistant",
+          text: "Read [Meta](https://about.fb.com/news/) or https://example.com/report.",
+          createdAt: "2026-08-12T09:00:00.000Z",
+          status: "completed",
+        },
+      ],
+    });
+    render(() => <App />);
+    const metaLink = await screen.findByRole("link", { name: "Meta" });
+    expect(metaLink).toHaveAttribute("href", "https://about.fb.com/news/");
+    expect(metaLink.querySelector("img")).toHaveAttribute("src", "https://about.fb.com/favicon.ico");
+    expect(screen.getByRole("link", { name: "https://example.com/report" })).toHaveAttribute(
+      "href",
+      "https://example.com/report",
+    );
+    expect(screen.queryByText("https://about.fb.com/news/")).not.toBeInTheDocument();
+
+    await fireEvent.click(metaLink);
+    expect(window.lunabot.openUrl).toHaveBeenCalledWith("https://about.fb.com/news/");
+    expect(window.lunabot.browser.open).not.toHaveBeenCalled();
+  });
+
+  it("refreshes stored history when Codex becomes ready after the window opens", async () => {
+    vi.mocked(window.lunabot.agent.getStatus).mockResolvedValue({
+      phase: "starting",
+      cliVersion: "0.144.1",
+      auth: { kind: "unknown" },
+      capabilities: { chat: "unavailable", browser: "ready", computerUse: "unavailable" },
+      message: "Starting local Codex…",
+      fullAccess: true,
+    });
+    vi.mocked(window.lunabot.agent.readConversation)
+      .mockResolvedValueOnce({
+        botId: "chief",
+        threadId: "thread-chief",
+        activeTurnId: null,
+        revision: 0,
+        messages: [],
+      })
+      .mockResolvedValueOnce({
+        botId: "chief",
+        threadId: "thread-chief",
+        activeTurnId: null,
+        revision: 1,
+        messages: [
+          {
+            id: "restored-answer",
+            author: "assistant",
+            text: "Restored after Codex became ready",
+            createdAt: "2026-08-12T10:00:00.000Z",
+            status: "completed",
+          },
+        ],
+      });
+
+    render(() => <App />);
+    await screen.findByText("Connecting to agent CLIs…");
+    emitAgentEvent?.({
+      type: "status",
+      status: {
+        phase: "ready",
+        cliVersion: "0.144.1",
+        auth: { kind: "chatgpt", email: "user@example.com" },
+        capabilities: { chat: "ready", browser: "ready", computerUse: "ready" },
+        message: null,
+        fullAccess: true,
+      },
+    });
+
+    expect(await screen.findByText("Restored after Codex became ready")).toBeInTheDocument();
+    expect(window.lunabot.agent.readConversation).toHaveBeenCalledTimes(2);
+  });
+
+  it("filters and switches backend bots", async () => {
+    render(() => <App />);
+    await screen.findByRole("heading", { name: "Chief" });
+    await screen.findByRole("button", { name: "Agent model: Luna" });
+    const search = screen.getByRole("searchbox", { name: "Search chats" });
+    await fireEvent.input(search, { target: { value: "Sales" } });
+    await fireEvent.click(screen.getByRole("button", { name: /Sales Outbound/ }));
+    expect(screen.getByRole("heading", { name: "Sales Outbound" })).toBeInTheDocument();
+  });
+
+  it("restores and persists pinned chats", async () => {
+    window.localStorage.setItem(SIDEBAR_PINS_STORAGE_KEY, JSON.stringify([{ kind: "agent", id: "chief" }]));
+    render(() => <App />);
+    await screen.findByRole("heading", { name: "Chief" });
+
+    const pinnedChief = screen.getByRole("button", { name: "Chief, pinned agent" });
+    expect(screen.getByRole("region", { name: "Pinned chats" })).toBeInTheDocument();
+    await fireEvent.contextMenu(pinnedChief, { clientX: 120, clientY: 90 });
+    await fireEvent.pointerUp(screen.getByRole("menuitem", { name: "Unpin" }), { button: 0 });
+
+    await waitFor(() => expect(screen.queryByRole("region", { name: "Pinned chats" })).not.toBeInTheDocument());
+    expect(JSON.parse(window.localStorage.getItem(SIDEBAR_PINS_STORAGE_KEY) ?? "[]")).toEqual([]);
+    expect(screen.getByRole("button", { name: /Chief, Chief of staff/ })).toBeInTheDocument();
+  });
+
+  it("loads shared sidebar sections and connects section actions to the desktop API", async () => {
+    const sectionId = "11111111-1111-4111-8111-111111111111";
+    const layout = {
+      revision: 3,
+      sections: [{ id: sectionId, name: "Core team" }],
+      order: ["people", sectionId, "unassigned"],
+      agentAssignments: { chief: sectionId },
+      agentOrder: ["chief", "sales-outbound"],
+      hiddenAgentIds: [],
+    };
+    vi.mocked(window.lunabot.agent.getSidebarLayout).mockResolvedValueOnce(layout);
+    vi.mocked(window.lunabot.agent.mutateSidebarLayout).mockResolvedValueOnce({ ...layout, revision: 4 });
+
+    render(() => <App />);
+    await screen.findByRole("heading", { name: "Chief" });
+
+    const sectionToggle = await screen.findByRole("button", { name: "Core team" });
+    const section = sectionToggle.closest<HTMLElement>("[data-section-id]");
+    if (!section) throw new Error("Shared sidebar section is missing.");
+    expect(within(section).getByRole("button", { name: /Chief, Chief of staff/ })).toBeInTheDocument();
+
+    await fireEvent.click(sectionToggle);
+    expect(JSON.parse(window.localStorage.getItem(SIDEBAR_COLLAPSED_STORAGE_KEY) ?? "[]")).toEqual([sectionId]);
+
+    await fireEvent.contextMenu(screen.getByLabelText("Sidebar free area"));
+    const sidebarMenu = await screen.findByRole("menu", { name: "Sidebar actions" });
+    await fireEvent.pointerUp(within(sidebarMenu).getByRole("menuitem", { name: "New section" }), { button: 0 });
+    const sectionName = await screen.findByRole("textbox", { name: "New section name" });
+    await fireEvent.input(sectionName, { target: { value: "Product" } });
+    await fireEvent.keyDown(sectionName, { key: "Enter" });
+
+    await waitFor(() =>
+      expect(window.lunabot.agent.mutateSidebarLayout).toHaveBeenCalledWith({ type: "create", name: "Product" }),
+    );
+  });
+
+  it("creates a Bot from a suggestion with one complete backend input", async () => {
+    render(() => <App />);
+    await screen.findByRole("heading", { name: "Chief" });
+
+    await fireEvent.click(screen.getByRole("button", { name: "Create new Bot" }));
+    expect(await screen.findByRole("heading", { name: "Create a Bot your way" })).toBeInTheDocument();
+    expect(window.lunabot.agent.createBot).not.toHaveBeenCalled();
+    await fireEvent.click(screen.getByRole("button", { name: /^Loose Ends\./ }));
+
+    const name = screen.getByRole("textbox", { name: "Name" });
+    const purpose = screen.getByRole("textbox", { name: "What should this Bot help with?" });
+    expect(name).toHaveValue("Loose Ends");
+    expect(purpose).toHaveValue(
+      "Review the conversations, notes and files I point you to, find commitments and questions left unanswered, and list each one with who is waiting and for how long.",
+    );
+    await fireEvent.click(screen.getByRole("button", { name: "Create Bot" }));
+
+    await waitFor(() => expect(window.lunabot.agent.createBot).toHaveBeenCalledOnce());
+    const draft = {
+      name: "Loose Ends",
+      purpose:
+        "Review the conversations, notes and files I point you to, find commitments and questions left unanswered, and list each one with who is waiting and for how long.",
+    };
+    expect(window.lunabot.agent.createBot).toHaveBeenCalledWith({
+      name: draft.name,
+      description: draft.purpose,
+      avatarSeed: expect.any(String),
+      avatarHue: 215,
+      initialMessage: createBotInitialMessage(draft),
+    });
+    expect(window.lunabot.agent.sendMessage).not.toHaveBeenCalled();
+    expect(await screen.findByRole("heading", { name: "Loose Ends" })).toBeInTheDocument();
+  });
+
+  it("resizes and persists the left and right side panels", async () => {
+    render(() => <App />);
+    await screen.findByRole("heading", { name: "Chief" });
+
+    const leftResizer = screen.getByRole("separator", { name: "Resize left sidebar" });
+    await fireEvent.keyDown(leftResizer, { key: "ArrowRight" });
+    expect(leftResizer).toHaveAttribute("aria-valuenow", "292");
+    expect(window.localStorage.getItem("lunabot:left-panel-width")).toBe("292");
+
+    await fireEvent.keyDown(leftResizer, { key: "Home" });
+    expect(leftResizer).toHaveAttribute("aria-valuenow", "64");
+    expect(leftResizer).toHaveAttribute("aria-valuetext", "Compact (64px)");
+    expect(window.localStorage.getItem("lunabot:left-panel-width")).toBe("292");
+
+    await fireEvent.keyDown(leftResizer, { key: "ArrowRight" });
+    expect(leftResizer).toHaveAttribute("aria-valuenow", "240");
+    await fireEvent.keyDown(leftResizer, { key: "End" });
+    expect(leftResizer).toHaveAttribute("aria-valuenow", "400");
+    await fireEvent.dblClick(leftResizer);
+    expect(leftResizer).toHaveAttribute("aria-valuenow", "280");
+
+    await fireEvent.click(screen.getByRole("button", { name: "View agent settings" }));
+    const rightResizer = await screen.findByRole("separator", { name: "Resize right panel" });
+    await fireEvent.keyDown(rightResizer, { key: "ArrowLeft" });
+    expect(rightResizer).toHaveAttribute("aria-valuenow", "308");
+    expect(window.localStorage.getItem("lunabot:settings-panel-width")).toBe("308");
+
+    await fireEvent.dblClick(rightResizer);
+    expect(rightResizer).toHaveAttribute("aria-valuenow", "296");
+
+    await fireEvent.keyDown(rightResizer, { key: "Home" });
+    expect(rightResizer).toHaveAttribute("aria-valuenow", "180");
+    await fireEvent.keyDown(rightResizer, { key: "End" });
+    expect(rightResizer).toHaveAttribute("aria-valuenow", String(Math.min(1600, window.innerWidth - 96)));
+  });
+
+  it("selects a provider and model from the conversation header", async () => {
+    render(() => <App />);
+    await screen.findByRole("heading", { name: "Chief" });
+
+    const trigger = screen.getByRole("button", { name: "Agent model: Luna" });
+    expect(trigger.querySelector(".provider-model-mark-codex")).toBeInTheDocument();
+    await fireEvent.click(trigger);
+    const picker = screen.getByRole("dialog", { name: "Choose agent model" });
+    expect(within(picker).getByText("0.144.1 (Codex CLI)")).toBeInTheDocument();
+    expect(within(picker).getByRole("option", { name: "Luna, default" })).toHaveAttribute("aria-selected", "true");
+
+    await fireEvent.click(within(picker).getByRole("tab", { name: /^Claude:/ }));
+    expect(window.lunabot.agent.updateBot).not.toHaveBeenCalled();
+    expect(within(picker).getByText("2.1.231 (Claude Code)")).toBeInTheDocument();
+    await fireEvent.click(within(picker).getByRole("option", { name: "Claude Haiku 5.5, default" }));
+
+    await waitFor(() =>
+      expect(window.lunabot.agent.updateBot).toHaveBeenCalledWith({
+        botId: "chief",
+        model: "claude-haiku-5-5",
+        provider: "claude",
+        reasoningEffort: "medium",
+      }),
+    );
+    expect(screen.getByRole("dialog", { name: "Choose agent model" })).toBeInTheDocument();
+    const claudeTrigger = await screen.findByRole("button", {
+      name: "Agent model: Claude Haiku 5.5",
+    });
+    expect(claudeTrigger).toBeEnabled();
+    expect(claudeTrigger.querySelector(".provider-model-mark-claude")).toBeInTheDocument();
+    expect(claudeTrigger.querySelector(".provider-model-mark-codex")).not.toBeInTheDocument();
+  });
+
+  it("changes reasoning effort from the header model picker without closing it", async () => {
+    render(() => <App />);
+    await screen.findByRole("heading", { name: "Chief" });
+
+    await fireEvent.click(screen.getByRole("button", { name: "Agent model: Luna" }));
+    const picker = screen.getByRole("dialog", { name: "Choose agent model" });
+    const effort = within(picker).getByRole("button", { name: /Agent reasoning effort/ });
+    expect(effort).toHaveTextContent("Medium");
+
+    await fireEvent.pointerDown(effort, { pointerType: "mouse", button: 0 });
+    await fireEvent.click(screen.getByRole("option", { name: "High" }));
+
+    await waitFor(() =>
+      expect(window.lunabot.agent.updateBot).toHaveBeenCalledWith({
+        botId: "chief",
+        reasoningEffort: "high",
+      }),
+    );
+    expect(effort).toHaveTextContent("High");
+    expect(picker).toBeInTheDocument();
+  });
+
+  it("persists rapid model and effort changes in order as complete settings", async () => {
+    const chief = BOTS.find((bot) => bot.id === "chief");
+    if (!chief) throw new Error("Chief fixture is missing");
+    let resolveModelUpdate!: (bot: BotSummary) => void;
+    vi.mocked(window.lunabot.agent.updateBot)
+      .mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            resolveModelUpdate = resolve;
+          }),
+      )
+      .mockImplementationOnce(async (input) => ({
+        ...chief,
+        ...input,
+        provider: "claude",
+        model: "claude-haiku-5-5",
+      }));
+    render(() => <App />);
+    await screen.findByRole("heading", { name: "Chief" });
+
+    await fireEvent.click(screen.getByRole("button", { name: "Agent model: Luna" }));
+    const picker = screen.getByRole("dialog", { name: "Choose agent model" });
+    await fireEvent.click(within(picker).getByRole("tab", { name: /^Claude:/ }));
+    await fireEvent.click(within(picker).getByRole("option", { name: "Claude Haiku 5.5, default" }));
+    const effort = within(picker).getByRole("button", { name: /Agent reasoning effort/ });
+    await fireEvent.pointerDown(effort, { pointerType: "mouse", button: 0 });
+    await fireEvent.click(screen.getByRole("option", { name: "High" }));
+
+    expect(window.lunabot.agent.updateBot).toHaveBeenCalledTimes(1);
+    expect(effort).toHaveTextContent("High");
+    resolveModelUpdate({
+      ...chief,
+      provider: "claude",
+      model: "claude-haiku-5-5",
+      reasoningEffort: "medium",
+    });
+
+    await waitFor(() =>
+      expect(vi.mocked(window.lunabot.agent.updateBot).mock.calls).toEqual([
+        [
+          {
+            botId: "chief",
+            provider: "claude",
+            model: "claude-haiku-5-5",
+            reasoningEffort: "medium",
+          },
+        ],
+        [
+          {
+            botId: "chief",
+            reasoningEffort: "high",
+          },
+        ],
+      ]),
+    );
+    expect(window.lunabot.agent.updateBot).toHaveBeenLastCalledWith({
+      botId: "chief",
+      reasoningEffort: "high",
+    });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(screen.getByRole("button", { name: "Agent model: Claude Haiku 5.5" })).toBeEnabled();
+    expect(effort).toHaveTextContent("High");
+  });
+
+  it("rolls back a queued effort when its model save fails", async () => {
+    let rejectModelUpdate!: (error: Error) => void;
+    vi.mocked(window.lunabot.agent.updateBot).mockImplementationOnce(
+      () =>
+        new Promise((_, reject) => {
+          rejectModelUpdate = reject;
+        }),
+    );
+    render(() => <App />);
+    await screen.findByRole("heading", { name: "Chief" });
+
+    await fireEvent.click(screen.getByRole("button", { name: "Agent model: Luna" }));
+    const picker = screen.getByRole("dialog", { name: "Choose agent model" });
+    await fireEvent.click(within(picker).getByRole("option", { name: "Sol" }));
+    const effort = within(picker).getByRole("button", { name: /Agent reasoning effort/ });
+    await fireEvent.pointerDown(effort, { pointerType: "mouse", button: 0 });
+    await fireEvent.click(screen.getByRole("option", { name: "Extra high" }));
+
+    expect(window.lunabot.agent.updateBot).toHaveBeenCalledTimes(1);
+    rejectModelUpdate(new Error("Model failed"));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("The effort level didn't change. Please retry.");
+    expect(window.lunabot.agent.updateBot).toHaveBeenCalledTimes(1);
+    expect(screen.getByRole("button", { name: "Agent model: Luna" })).toBeEnabled();
+    expect(effort).toHaveTextContent("Medium");
+    await fireEvent.click(screen.getByRole("button", { name: "Agent model: Luna" }));
+  });
+
+  it("reconciles a concurrent model update after an effort save succeeds", async () => {
+    let resolveEffortUpdate!: (bot: BotSummary) => void;
+    vi.mocked(window.lunabot.agent.updateBot).mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolveEffortUpdate = resolve;
+        }),
+    );
+    render(() => <App />);
+    await screen.findByRole("heading", { name: "Chief" });
+
+    await fireEvent.click(screen.getByRole("button", { name: "Agent model: Luna" }));
+    const picker = screen.getByRole("dialog", { name: "Choose agent model" });
+    const effort = within(picker).getByRole("button", { name: /Agent reasoning effort/ });
+    await fireEvent.pointerDown(effort, { pointerType: "mouse", button: 0 });
+    await fireEvent.click(screen.getByRole("option", { name: "High" }));
+
+    const chief = BOTS.find((bot) => bot.id === "chief");
+    if (!chief) throw new Error("Chief fixture is missing");
+    const concurrentBot = { ...chief, model: "gpt-5.6-sol" as const, reasoningEffort: "high" as const };
+    emitAgentEvent?.({ type: "bots-changed", bots: BOTS.map((bot) => (bot.id === "chief" ? concurrentBot : bot)) });
+    expect(screen.getByRole("button", { name: "Agent model: Luna" })).toBeEnabled();
+
+    resolveEffortUpdate(concurrentBot);
+
+    expect(await screen.findByRole("button", { name: "Agent model: Sol" })).toBeEnabled();
+    expect(effort).toHaveTextContent("High");
+    await fireEvent.click(screen.getByRole("button", { name: "Agent model: Sol" }));
+  });
+
+  it("orders Agent Settings effort changes after pending header model changes", async () => {
+    const chief = BOTS.find((bot) => bot.id === "chief");
+    if (!chief) throw new Error("Chief fixture is missing");
+    let resolveHeaderUpdate!: (bot: BotSummary) => void;
+    vi.mocked(window.lunabot.agent.updateBot)
+      .mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            resolveHeaderUpdate = resolve;
+          }),
+      )
+      .mockImplementationOnce(async (input) => ({
+        ...chief,
+        ...input,
+        provider: "claude",
+        model: "claude-haiku-5-5",
+      }));
+    render(() => <App />);
+    await screen.findByRole("heading", { name: "Chief" });
+
+    await fireEvent.click(screen.getByRole("button", { name: "Agent model: Luna" }));
+    const headerPicker = screen.getByRole("dialog", { name: "Choose agent model" });
+    await fireEvent.click(within(headerPicker).getByRole("tab", { name: /^Claude:/ }));
+    await fireEvent.click(within(headerPicker).getByRole("option", { name: "Claude Haiku 5.5, default" }));
+    await fireEvent.click(screen.getByRole("button", { name: "View agent settings" }));
+
+    const settings = await screen.findByRole("complementary", { name: "Agent settings" });
+    expect(within(settings).getByRole("button", { name: "Agent model: Claude Haiku 5.5" })).toBeEnabled();
+    const effort = within(settings).getByRole("button", { name: /Agent reasoning level/ });
+    await fireEvent.pointerDown(effort, { pointerType: "mouse", button: 0 });
+    await fireEvent.click(screen.getByRole("option", { name: "High" }));
+
+    expect(window.lunabot.agent.updateBot).toHaveBeenCalledTimes(1);
+    resolveHeaderUpdate({
+      ...chief,
+      provider: "claude",
+      model: "claude-haiku-5-5",
+      reasoningEffort: "medium",
+    });
+
+    await waitFor(() =>
+      expect(vi.mocked(window.lunabot.agent.updateBot).mock.calls).toEqual([
+        [
+          {
+            botId: "chief",
+            provider: "claude",
+            model: "claude-haiku-5-5",
+            reasoningEffort: "medium",
+          },
+        ],
+        [
+          {
+            botId: "chief",
+            reasoningEffort: "high",
+          },
+        ],
+      ]),
+    );
+    expect(window.lunabot.agent.updateBot).toHaveBeenLastCalledWith({
+      botId: "chief",
+      reasoningEffort: "high",
+    });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(within(settings).getByRole("button", { name: "Agent model: Claude Haiku 5.5" })).toBeEnabled();
+    expect(effort).toHaveTextContent("High");
+  });
+
+  it("does not roll back a newer effort when an older save fails", async () => {
+    let rejectFirstUpdate!: (error: Error) => void;
+    vi.mocked(window.lunabot.agent.updateBot).mockImplementationOnce(
+      () =>
+        new Promise((_, reject) => {
+          rejectFirstUpdate = reject;
+        }),
+    );
+    render(() => <App />);
+    await screen.findByRole("heading", { name: "Chief" });
+
+    await fireEvent.click(screen.getByRole("button", { name: "Agent model: Luna" }));
+    const picker = screen.getByRole("dialog", { name: "Choose agent model" });
+    const effort = within(picker).getByRole("button", { name: /Agent reasoning effort/ });
+    await fireEvent.pointerDown(effort, { pointerType: "mouse", button: 0 });
+    await fireEvent.click(screen.getByRole("option", { name: "High" }));
+    await fireEvent.pointerDown(effort, { pointerType: "mouse", button: 0 });
+    await fireEvent.click(screen.getByRole("option", { name: "Low" }));
+
+    expect(window.lunabot.agent.updateBot).toHaveBeenCalledTimes(1);
+    rejectFirstUpdate(new Error("Older effort failed"));
+    await waitFor(() => expect(window.lunabot.agent.updateBot).toHaveBeenCalledTimes(2));
+    expect(window.lunabot.agent.updateBot).toHaveBeenLastCalledWith({
+      botId: "chief",
+      reasoningEffort: "low",
+    });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(effort).toHaveTextContent("Low");
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  });
+
+  it("does not roll back or report an effort failure after switching agents", async () => {
+    let rejectUpdate!: (error: Error) => void;
+    vi.mocked(window.lunabot.agent.updateBot).mockImplementationOnce(
+      () =>
+        new Promise((_, reject) => {
+          rejectUpdate = reject;
+        }),
+    );
+    render(() => <App />);
+    await screen.findByRole("heading", { name: "Chief" });
+
+    await fireEvent.click(screen.getByRole("button", { name: "Agent model: Luna" }));
+    const picker = screen.getByRole("dialog", { name: "Choose agent model" });
+    const effort = within(picker).getByRole("button", { name: /Agent reasoning effort/ });
+    await fireEvent.pointerDown(effort, { pointerType: "mouse", button: 0 });
+    await fireEvent.click(screen.getByRole("option", { name: "High" }));
+    await fireEvent.click(screen.getByRole("button", { name: /Sales Outbound/ }));
+    await screen.findByRole("heading", { name: "Sales Outbound" });
+
+    rejectUpdate(new Error("Chief effort failed"));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Agent model: Luna" })).toBeEnabled();
+  });
+
+  it("rolls back a failed header effort change and reports the error", async () => {
+    vi.mocked(window.lunabot.agent.updateBot).mockRejectedValueOnce(new Error("Effort failed"));
+    render(() => <App />);
+    await screen.findByRole("heading", { name: "Chief" });
+
+    await fireEvent.click(screen.getByRole("button", { name: "Agent model: Luna" }));
+    const picker = screen.getByRole("dialog", { name: "Choose agent model" });
+    const effort = within(picker).getByRole("button", { name: /Agent reasoning effort/ });
+    await fireEvent.pointerDown(effort, { pointerType: "mouse", button: 0 });
+    await fireEvent.click(screen.getByRole("option", { name: "High" }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("The effort level didn't change. Please retry.");
+    expect(effort).toHaveTextContent("Medium");
+    expect(picker).toBeInTheDocument();
+  });
+
+  it("shows unavailable providers without allowing their models", async () => {
+    vi.mocked(window.lunabot.agent.getStatus).mockResolvedValueOnce({
+      phase: "ready",
+      cliVersion: "0.144.1",
+      auth: { kind: "chatgpt", email: "user@example.com" },
+      providers: [
+        { id: "codex", state: "available", version: "0.144.1", message: null },
+        {
+          id: "claude",
+          state: "not-installed",
+          version: null,
+          message: "Claude CLI was not found.",
+        },
+      ],
+      capabilities: { chat: "ready", browser: "ready", computerUse: "ready" },
+      message: null,
+      fullAccess: true,
+    });
+    render(() => <App />);
+    await screen.findByRole("heading", { name: "Chief" });
+
+    await fireEvent.click(screen.getByRole("button", { name: "Agent model: Luna" }));
+    const picker = screen.getByRole("dialog", { name: "Choose agent model" });
+    await fireEvent.click(within(picker).getByRole("tab", { name: /Claude: Claude CLI was not found/ }));
+    expect(within(picker).getByText("Claude CLI was not found.")).toBeInTheDocument();
+    expect(within(picker).getByRole("option", { name: "Claude Haiku 5.5, default" })).toBeDisabled();
+    expect(window.lunabot.agent.updateBot).not.toHaveBeenCalled();
+  });
+
+  it("rolls back a failed header model change and reports the error", async () => {
+    vi.mocked(window.lunabot.agent.updateBot).mockRejectedValueOnce(new Error("Provider failed"));
+    render(() => <App />);
+    await screen.findByRole("heading", { name: "Chief" });
+    await screen.findByRole("button", { name: "Agent model: Luna" });
+
+    await fireEvent.click(screen.getByRole("button", { name: "Agent model: Luna" }));
+    await fireEvent.click(screen.getByRole("option", { name: "Sol" }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("The model didn't change. Please retry.");
+    expect(screen.getByRole("button", { name: "Agent model: Luna" })).toBeEnabled();
+    expect(
+      screen.queryByRole("radiogroup", { name: "What do you want me helping with most?" }),
+    ).not.toBeInTheDocument();
+    expect(screen.getByLabelText("Message Chief")).toHaveAttribute("contenteditable", "true");
+  });
+
+  it("locks the header model picker during active work", async () => {
+    render(() => <App />);
+    await screen.findByRole("heading", { name: "Chief" });
+    const trigger = screen.getByRole("button", { name: "Agent model: Luna" });
+    await waitFor(() => expect(trigger).toBeEnabled());
+
+    emitAgentEvent?.({
+      type: "turn-started",
+      botId: "chief",
+      threadId: "thread-chief",
+      turnId: "turn-1",
+    });
+    await waitFor(() => expect(trigger).toBeDisabled());
+    expect(trigger).toHaveAttribute("title", "Wait for the current work to finish before changing models.");
+
+    emitAgentEvent?.({
+      type: "turn-completed",
+      botId: "chief",
+      threadId: "thread-chief",
+      turnId: "turn-1",
+      status: "completed",
+    });
+    await waitFor(() => expect(trigger).toBeEnabled());
+  });
+
+  it("supports picker keyboard navigation and outside dismissal", async () => {
+    render(() => <App />);
+    await screen.findByRole("heading", { name: "Chief" });
+    const trigger = screen.getByRole("button", { name: "Agent model: Luna" });
+
+    await fireEvent.click(trigger);
+    const picker = screen.getByRole("dialog", { name: "Choose agent model" });
+    const codex = within(picker).getByRole("tab", { name: /^ChatGPT:/ });
+    await fireEvent.keyDown(codex, { key: "ArrowUp" });
+    const claude = within(picker).getByRole("tab", { name: /^Claude:/ });
+    expect(claude).toHaveFocus();
+    expect(claude).toHaveAttribute("aria-selected", "true");
+
+    await fireEvent.keyDown(picker, { key: "Escape" });
+    expect(screen.queryByRole("dialog", { name: "Choose agent model" })).not.toBeInTheDocument();
+    await fireEvent.click(trigger);
+    expect(screen.getByRole("dialog", { name: "Choose agent model" })).toBeInTheDocument();
+    await fireEvent.pointerDown(document.body);
+    expect(screen.queryByRole("dialog", { name: "Choose agent model" })).not.toBeInTheDocument();
+  });
+
+  it("edits the persisted model and thinking level in agent settings", async () => {
+    render(() => <App />);
+    await screen.findByRole("heading", { name: "Chief" });
+    await fireEvent.click(screen.getByRole("button", { name: "View agent settings" }));
+
+    const settings = await screen.findByRole("complementary", { name: "Agent settings" });
+    const thinking = within(settings).getByRole("button", { name: /Agent reasoning level/ });
+    expect(within(settings).getByRole("button", { name: "Agent model: Luna" })).toBeEnabled();
+    expect(thinking).toHaveTextContent("Medium");
+
+    await fireEvent.click(within(settings).getByRole("button", { name: "Agent model: Luna" }));
+    let picker = within(settings).getByRole("dialog", { name: "Choose agent model" });
+    await fireEvent.click(within(picker).getByRole("tab", { name: /^Claude:/ }));
+    await fireEvent.click(within(picker).getByRole("option", { name: "Claude Haiku 5.5, default" }));
+    await waitFor(() =>
+      expect(window.lunabot.agent.updateBot).toHaveBeenCalledWith({
+        botId: "chief",
+        model: "claude-haiku-5-5",
+        provider: "claude",
+        reasoningEffort: "medium",
+      }),
+    );
+    expect(within(settings).getByRole("button", { name: "Agent model: Claude Haiku 5.5" })).toBeEnabled();
+
+    await fireEvent.click(within(settings).getByRole("button", { name: "Agent model: Claude Haiku 5.5" }));
+    picker = within(settings).getByRole("dialog", { name: "Choose agent model" });
+    await fireEvent.click(within(picker).getByRole("tab", { name: /^ChatGPT:/ }));
+    await fireEvent.click(within(picker).getByRole("option", { name: "Sol" }));
+    await fireEvent.pointerDown(thinking, { pointerType: "mouse", button: 0 });
+    await fireEvent.click(screen.getByRole("option", { name: "Extra high" }));
+    await waitFor(() =>
+      expect(window.lunabot.agent.updateBot).toHaveBeenLastCalledWith({
+        botId: "chief",
+        reasoningEffort: "xhigh",
+      }),
+    );
+  });
+
+  it("opens the agent memory modal from settings", async () => {
+    render(() => <App />);
+    await screen.findByRole("heading", { name: "Chief" });
+    await fireEvent.click(screen.getByRole("button", { name: "View agent settings" }));
+    const settings = await screen.findByRole("complementary", { name: "Agent settings" });
+
+    await fireEvent.click(within(settings).getByRole("button", { name: /Memories/ }));
+    expect(await screen.findByRole("dialog", { name: "Memories" })).toBeInTheDocument();
+    expect(await screen.findByText("This agent has no saved memories yet.")).toBeInTheDocument();
+  });
+
+  it("removes a custom agent avatar and keeps its generated avatar settings", async () => {
+    vi.mocked(window.lunabot.agent.listBots).mockResolvedValueOnce([
+      { ...BOTS[0], avatarUrl: "lunabot-avatar://agent/chief?v=image-1" },
+    ]);
+    render(() => <App />);
+    await screen.findByRole("heading", { name: "Chief" });
+    await fireEvent.click(screen.getByRole("button", { name: "View agent settings" }));
+    const settings = await screen.findByRole("complementary", { name: "Agent settings" });
+    await fireEvent.click(within(settings).getByRole("button", { name: "Edit agent avatar" }));
+    const editor = within(settings).getByRole("dialog", { name: "Avatar editor" });
+    await fireEvent.click(within(editor).getByRole("button", { name: "Remove" }));
+    await waitFor(() => expect(window.lunabot.agent.setAvatar).toHaveBeenCalledWith({ botId: "chief", image: null }));
+    expect(window.lunabot.agent.updateBot).not.toHaveBeenCalledWith(
+      expect.objectContaining({ avatarSeed: expect.any(String) }),
+    );
+  });
+
+  it("keeps provider choices separate for each agent profile", async () => {
+    render(() => <App />);
+    await screen.findByRole("heading", { name: "Chief" });
+    await fireEvent.click(screen.getByRole("button", { name: "View agent settings" }));
+    let settings = await screen.findByRole("complementary", { name: "Agent settings" });
+    await fireEvent.click(within(settings).getByRole("button", { name: "Agent model: Luna" }));
+    let picker = within(settings).getByRole("dialog", { name: "Choose agent model" });
+    await fireEvent.click(within(picker).getByRole("tab", { name: /^Claude:/ }));
+    await fireEvent.click(within(picker).getByRole("option", { name: "Claude Haiku 5.5, default" }));
+
+    await fireEvent.click(screen.getByRole("button", { name: /Sales Outbound/ }));
+    await fireEvent.click(screen.getByRole("button", { name: "View agent settings" }));
+    settings = await screen.findByRole("complementary", { name: "Agent settings" });
+    expect(within(settings).getByRole("button", { name: "Agent model: Luna" })).toBeEnabled();
+
+    await fireEvent.click(within(settings).getByRole("button", { name: "Agent model: Luna" }));
+    picker = within(settings).getByRole("dialog", { name: "Choose agent model" });
+    await fireEvent.click(within(picker).getByRole("tab", { name: /^Claude:/ }));
+    await fireEvent.click(within(picker).getByRole("option", { name: "Claude Haiku 5.5, default" }));
+    await waitFor(() =>
+      expect(window.lunabot.agent.updateBot).toHaveBeenCalledWith({
+        botId: "sales-outbound",
+        model: "claude-haiku-5-5",
+        provider: "claude",
+        reasoningEffort: "medium",
+      }),
+    );
+  });
+
+  it("shows provider availability in the model picker", async () => {
+    vi.mocked(window.lunabot.agent.getStatus).mockResolvedValueOnce({
+      phase: "ready",
+      cliVersion: "0.144.1",
+      auth: { kind: "chatgpt", email: "user@example.com" },
+      providers: [
+        { id: "codex", state: "available", version: "0.144.1", message: null },
+        {
+          id: "claude",
+          state: "not-installed",
+          version: null,
+          message: "Claude CLI was not found.",
+        },
+      ],
+      capabilities: { chat: "ready", browser: "ready", computerUse: "ready" },
+      message: null,
+      fullAccess: true,
+    });
+    render(() => <App />);
+
+    const trigger = await screen.findByRole("button", { name: "Agent model: Luna" });
+    await fireEvent.click(trigger);
+    const picker = screen.getByRole("dialog", { name: "Choose agent model" });
+    expect(within(picker).getByRole("tab", { name: /^ChatGPT: 0.144.1/ })).toBeEnabled();
+    const claude = within(picker).getByRole("tab", {
+      name: "Claude: Claude CLI was not found.",
+    });
+    expect(claude).toBeEnabled();
+
+    await fireEvent.click(claude);
+    expect(within(picker).getByText("Claude CLI was not found.")).toBeInTheDocument();
+    expect(within(picker).getByRole("option", { name: "Claude Haiku 5.5, default" })).toBeDisabled();
+  });
+
+  it("does not remount agent text fields or discard in-progress edits on bot list refresh", async () => {
+    render(() => <App />);
+    await screen.findByRole("heading", { name: "Chief" });
+    await fireEvent.click(screen.getByRole("button", { name: "View agent settings" }));
+    const name = await screen.findByRole("textbox", { name: "Agent name" });
+    name.focus();
+    let draft = "";
+    let refresh = 0;
+    for (const character of "Draft coordinator name") {
+      draft += character;
+      await fireEvent.input(name, { target: { value: draft } });
+      refresh += 1;
+      emitAgentEvent?.({
+        type: "bots-changed",
+        bots: BOTS.map((bot) =>
+          bot.id === "chief"
+            ? { ...bot, preview: `Backend refresh ${refresh}`, notifications: refresh % 2 === 0 ? "all" : "nothing" }
+            : bot,
+        ),
+      });
+      expect(name).toHaveValue(draft);
+      expect(name).toHaveFocus();
+    }
+
+    expect(screen.getByRole("textbox", { name: "Agent name" })).toBe(name);
+    expect(name).toHaveValue("Draft coordinator name");
+
+    const title = screen.getByRole("textbox", { name: "Agent title" });
+    title.focus();
+    draft = "";
+    for (const character of "Research lead") {
+      draft += character;
+      await fireEvent.input(title, { target: { value: draft } });
+      refresh += 1;
+      emitAgentEvent?.({
+        type: "bots-changed",
+        bots: BOTS.map((bot) =>
+          bot.id === "chief"
+            ? { ...bot, preview: `Backend refresh ${refresh}`, notifications: refresh % 2 === 0 ? "all" : "nothing" }
+            : bot,
+        ),
+      });
+      expect(title).toHaveValue(draft);
+      expect(title).toHaveFocus();
+    }
+    expect(screen.getByRole("textbox", { name: "Agent title" })).toBe(title);
+
+    const description = screen.getByRole("textbox", { name: "Agent description" });
+    description.focus();
+    draft = "";
+    for (const character of "Tracks every research request.") {
+      draft += character;
+      await fireEvent.input(description, { target: { value: draft } });
+      refresh += 1;
+      emitAgentEvent?.({
+        type: "bots-changed",
+        bots: BOTS.map((bot) =>
+          bot.id === "chief"
+            ? { ...bot, preview: `Backend refresh ${refresh}`, notifications: refresh % 2 === 0 ? "all" : "nothing" }
+            : bot,
+        ),
+      });
+      expect(description).toHaveValue(draft);
+      expect(description).toHaveFocus();
+    }
+    expect(screen.getByRole("textbox", { name: "Agent description" })).toBe(description);
+  });
+
+  it("opens conversation search with the primary Find shortcut and restores focus on Escape", async () => {
+    render(() => <App />);
+    await screen.findByRole("heading", { name: "Chief" });
+    const searchReturnTarget = screen.getByRole("button", { name: "View agent settings" });
+    searchReturnTarget.focus();
+
+    await fireEvent.keyDown(searchReturnTarget, { key: "f", metaKey: true });
+
+    const search = screen.getByRole("search", { name: "Search conversation" });
+    const input = screen.getByRole("searchbox", { name: "Search messages" });
+    expect(search).toBeVisible();
+    await waitFor(() => expect(input).toHaveFocus());
+
+    await fireEvent.keyDown(input, { key: "Escape" });
+    expect(screen.queryByRole("search", { name: "Search conversation" })).not.toBeInTheDocument();
+    await waitFor(() => expect(searchReturnTarget).toHaveFocus());
+  });
+
+  it("opens global search with Command K and navigates to bot and message results", async () => {
+    vi.mocked(window.lunabot.agent.searchConversationMessages).mockResolvedValue({
+      results: [
+        {
+          botId: "sales-outbound",
+          message: {
+            id: "sales-search-result",
+            author: "assistant",
+            source: "assistant",
+            text: "Quarterly launch notes are ready for review.",
+            createdAt: "2026-08-20T09:30:00.000Z",
+            status: "completed",
+          },
+        },
+      ],
+      total: 1,
+      nextCursor: null,
+    });
+    vi.mocked(window.lunabot.agent.readConversation).mockImplementation(async (botId) => ({
+      botId,
+      threadId: null,
+      activeTurnId: null,
+      revision: 1,
+      messages:
+        botId === "sales-outbound"
+          ? [
+              {
+                id: "sales-search-result",
+                author: "assistant",
+                source: "assistant",
+                text: "Quarterly launch notes are ready for review.",
+                createdAt: "2026-08-20T09:30:00.000Z",
+                status: "completed",
+              },
+            ]
+          : [],
+      readState: { unreadCount: 0, firstUnreadMessageId: null, throughMessageId: null },
+    }));
+    render(() => <App />);
+    await screen.findByRole("heading", { name: "Chief" });
+
+    await fireEvent.keyDown(window, { key: "k", metaKey: true });
+
+    const dialog = await screen.findByRole("dialog", { name: "Search Luna Bot" });
+    const input = screen.getByRole("combobox", { name: "Search Luna Bot" });
+    expect(dialog).toBeVisible();
+    await waitFor(() => expect(input).toHaveFocus());
+
+    await fireEvent.click(screen.getByRole("tab", { name: "Messages" }));
+    await fireEvent.input(input, { target: { value: "quarterly" } });
+    const messageResult = await screen.findByRole("option", { name: /Quarterly launch notes/ });
+    await fireEvent.click(messageResult);
+    await screen.findByRole("heading", { name: "Sales Outbound" });
+    expect(window.lunabot.agent.searchConversationMessages).toHaveBeenCalledWith({
+      query: "quarterly",
+      limit: 100,
+    });
+    expect(window.lunabot.agent.readConversationPage).toHaveBeenCalledWith({
+      botId: "sales-outbound",
+      anchor: { type: "around", messageId: "sales-search-result" },
+      limit: 50,
+    });
+
+    await fireEvent.keyDown(window, { key: "k", metaKey: true });
+    await fireEvent.click(screen.getByRole("tab", { name: "Bots" }));
+    const botSearch = screen.getByRole("combobox", { name: "Search Luna Bot" });
+    await fireEvent.input(botSearch, { target: { value: "chief" } });
+    await fireEvent.click(await screen.findByRole("option", { name: /Chief/ }));
+    await screen.findByRole("heading", { name: "Chief" });
+  });
+
+  it("keeps an accessible compact sidebar and opens global search from its rail without expanding it", async () => {
+    render(() => <App />);
+    await screen.findByRole("heading", { name: "Chief" });
+
+    expect(screen.getByRole("button", { name: "Collapse sidebar" })).toHaveAttribute("aria-expanded", "true");
+    const resizer = screen.getByRole("separator", { name: "Resize left sidebar" });
+    await fireEvent.keyDown(resizer, { key: "Home" });
+
+    expect(screen.getByRole("separator", { name: "Resize left sidebar" })).toHaveAttribute("aria-valuenow", "64");
+    expect(window.localStorage.getItem("lunabot:left-panel-collapsed")).toBe("true");
+    expect(screen.queryByRole("button", { name: "Show sidebar" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Expand sidebar" })).toHaveAttribute("aria-expanded", "false");
+
+    const compactAccountButton = await screen.findByRole("button", { name: "Open account menu" });
+    await fireEvent.click(compactAccountButton);
+    const compactAccountDialog = screen.getByRole("dialog", { name: "Account actions" });
+    expect(within(compactAccountDialog).getByRole("button", { name: /Check for updates/ })).toBeInTheDocument();
+    expect(within(compactAccountDialog).getByRole("button", { name: "Providers & permissions" })).toBeInTheDocument();
+    expect(within(compactAccountDialog).getByRole("button", { name: "Settings" })).toBeInTheDocument();
+    const compactUsageButton = await within(compactAccountDialog).findByRole("button", {
+      name: "Weekly usage, 59% left",
+    });
+    expect(within(compactAccountDialog).queryByRole("button", { name: /photo/i })).not.toBeInTheDocument();
+    vi.mocked(window.lunabot.agent.getUsage).mockRejectedValueOnce(new Error("Usage service unavailable."));
+    const usageRequestsBeforeRefresh = vi.mocked(window.lunabot.agent.getUsage).mock.calls.length;
+    await fireEvent.click(compactUsageButton);
+    await waitFor(() => expect(window.lunabot.agent.getUsage).toHaveBeenCalledTimes(usageRequestsBeforeRefresh + 1));
+    expect(await within(compactAccountDialog).findByText("Usage service unavailable.")).toBeInTheDocument();
+    await fireEvent.keyDown(compactAccountDialog, { key: "Escape" });
+    await waitFor(() => expect(compactAccountButton).toHaveFocus());
+
+    await fireEvent.click(compactAccountButton);
+    await fireEvent.click(
+      within(await screen.findByRole("dialog", { name: "Account actions" })).getByRole("button", { name: "Settings" }),
+    );
+    const compactSettingsDialog = await screen.findByRole("dialog", { name: "General" });
+    await fireEvent.click(within(compactSettingsDialog).getByRole("button", { name: "Close settings" }));
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: "General" })).not.toBeInTheDocument());
+    await waitFor(() => expect(compactAccountButton).toHaveFocus());
+
+    await fireEvent.click(screen.getByRole("button", { name: "Search Luna Bot" }));
+    expect(await screen.findByRole("combobox", { name: "Search Luna Bot" })).toBeInTheDocument();
+    expect(window.localStorage.getItem("lunabot:left-panel-collapsed")).toBe("true");
+  });
+
+  it("snaps drag resizing between compact and expanded widths with hysteresis", async () => {
+    render(() => <App />);
+    await screen.findByRole("heading", { name: "Chief" });
+    const resizer = screen.getByRole("separator", { name: "Resize left sidebar" });
+
+    await fireEvent.pointerDown(resizer, { button: 0, pointerId: 1, clientX: 280 });
+    await fireEvent.pointerMove(window, { pointerId: 1, clientX: 209 });
+    await fireEvent.pointerUp(window, { pointerId: 1, clientX: 209 });
+    expect(resizer).toHaveAttribute("aria-valuenow", "64");
+
+    await fireEvent.pointerDown(resizer, { button: 0, pointerId: 2, clientX: 100 });
+    await fireEvent.pointerMove(window, { pointerId: 2, clientX: 255 });
+    expect(resizer).toHaveAttribute("aria-valuenow", "64");
+    await fireEvent.pointerMove(window, { pointerId: 2, clientX: 256 });
+    await fireEvent.pointerUp(window, { pointerId: 2, clientX: 256 });
+    expect(resizer).toHaveAttribute("aria-valuenow", "240");
+  });
+
+  it("lays out the shell on Linux exactly like Windows", async () => {
+    const shellClasses = async (platform: "win32" | "linux") => {
+      vi.mocked(window.lunabot.getAppInfo).mockResolvedValue({
+        name: "Luna Bot",
+        version: "0.1.0",
+        platform,
+        variant: "production",
+      });
+      const { unmount } = render(() => <App />);
+      await screen.findByRole("heading", { name: "Chief" });
+      await waitFor(() => expect(document.querySelector(".account-dock-with-leading-column")).not.toBeNull());
+      const classes = {
+        frame: document.querySelector(".app-frame")?.className,
+        hybridDock: document.querySelector(".account-dock-hybrid") !== null,
+      };
+      unmount();
+      return classes;
+    };
+
+    const linux = await shellClasses("linux");
+    const windows = await shellClasses("win32");
+
+    expect(linux).toEqual(windows);
+    expect(linux.hybridDock).toBe(false);
+  });
+
+  it("does not show the macOS shell when the app info request fails off macOS", async () => {
+    vi.mocked(window.lunabot.getAppInfo).mockRejectedValue(new Error("unavailable"));
+    const { unmount } = render(() => <App />);
+    await screen.findByRole("heading", { name: "Chief" });
+    await waitFor(() => expect(document.querySelector(".account-dock-with-leading-column")).not.toBeNull());
+
+    expect(document.querySelector(".app-frame-platform-darwin")).toBeNull();
+    expect(document.querySelector(".account-dock-hybrid")).toBeNull();
+    unmount();
+  });
+
+  it("toggles the sidebar with the platform shortcut, remembers it, and ignores keys typed in fields", async () => {
+    const { unmount } = render(() => <App />);
+    await screen.findByRole("heading", { name: "Chief" });
+
+    await fireEvent.keyDown(window, { key: "b", metaKey: true });
+    expect(screen.getByRole("separator", { name: "Resize left sidebar" })).toHaveAttribute("aria-valuenow", "64");
+    expect(window.localStorage.getItem("lunabot:left-panel-collapsed")).toBe("true");
+
+    const field = document.createElement("input");
+    document.body.append(field);
+    await fireEvent.keyDown(field, { key: "b", metaKey: true });
+    field.remove();
+    expect(screen.getByRole("separator", { name: "Resize left sidebar" })).toHaveAttribute("aria-valuenow", "64");
+
+    unmount();
+    render(() => <App />);
+    await screen.findByRole("heading", { name: "Chief" });
+    expect(screen.getByRole("separator", { name: "Resize left sidebar" })).toHaveAttribute("aria-valuenow", "64");
+
+    await fireEvent.keyDown(window, { key: "b", metaKey: true });
+    expect(screen.getByRole("separator", { name: "Resize left sidebar" })).toHaveAttribute("aria-valuenow", "280");
+    expect(window.localStorage.getItem("lunabot:left-panel-collapsed")).toBe("false");
+  });
+
+  it("starts with the sidebar collapsed in narrow windows when no preference is saved", async () => {
+    Object.defineProperty(window, "innerWidth", { configurable: true, value: 900 });
+    render(() => <App />);
+    await screen.findByRole("heading", { name: "Chief" });
+
+    expect(screen.getByRole("button", { name: "Expand sidebar" })).toHaveAttribute("aria-expanded", "false");
+    expect(window.localStorage.getItem("lunabot:left-panel-collapsed")).toBeNull();
+  });
+
+  it("migrates old narrow sidebar widths to the expanded minimum", async () => {
+    window.localStorage.setItem("lunabot:left-panel-width", "220");
+    render(() => <App />);
+    await screen.findByRole("heading", { name: "Chief" });
+
+    expect(screen.getByRole("separator", { name: "Resize left sidebar" })).toHaveAttribute("aria-valuenow", "240");
+  });
+
+  it("moves the live embedded browser between the sidebar and desktop Picture in Picture", async () => {
+    render(() => <App />);
+    await screen.findByRole("heading", { name: "Chief" });
+    emitAgentEvent?.({
+      type: "browser-changed",
+      tabs: [
+        {
+          id: "tab-pip",
+          title: "Picture in Picture test",
+          url: "https://example.com/pip",
+          loading: false,
+          ownerThreadId: "thread-chief",
+          ownerBotId: "chief",
+        },
+      ],
+      activeTabId: "tab-pip",
+    });
+
+    await fireEvent.click(screen.getByRole("button", { name: "Open computer" }));
+    const conversation = screen.getByRole("main", { name: "Conversation" });
+    expect(await screen.findByRole("complementary", { name: "Browser" })).toBeInTheDocument();
+    expect(conversation).toHaveClass("browser-panel-active");
+
+    await fireEvent.click(screen.getByRole("button", { name: "Pop the browser into Picture in Picture" }));
+
+    await waitFor(() => expect(window.lunabot.browser.openPictureInPicture).toHaveBeenCalledWith(undefined));
+    expect(screen.queryByRole("complementary", { name: "Browser" })).not.toBeInTheDocument();
+    expect(conversation).not.toHaveClass("browser-panel-active");
+    expect(window.lunabot.browser.close).not.toHaveBeenCalled();
+
+    emitBrowserPictureInPicture?.({
+      type: "bounds-changed",
+      bounds: { x: 720, y: 360, width: 460, height: 340 },
+    });
+    expect(window.localStorage.getItem("lunabot:browser-pip-native-bounds")).toBe("720,360,460,340");
+
+    emitBrowserPictureInPicture?.({ type: "dock" });
+    expect(await screen.findByRole("complementary", { name: "Browser" })).toBeInTheDocument();
+    expect(conversation).toHaveClass("browser-panel-active");
+    expect(window.lunabot.browser.close).not.toHaveBeenCalled();
+
+    await fireEvent.click(screen.getByRole("button", { name: "Pop the browser into Picture in Picture" }));
+    await waitFor(() =>
+      expect(window.lunabot.browser.openPictureInPicture).toHaveBeenLastCalledWith({
+        x: 720,
+        y: 360,
+        width: 460,
+        height: 340,
+      }),
+    );
+    emitBrowserPictureInPicture?.({ type: "hide" });
+    expect(screen.queryByRole("complementary", { name: "Browser" })).not.toBeInTheDocument();
+    expect(window.lunabot.browser.close).not.toHaveBeenCalled();
+  });
+  it("keeps a newly opened browser tab active when the initial tab request resolves late", async () => {
+    const googleTab: BrowserTab = {
+      id: "tab-google",
+      title: "Google",
+      url: "https://www.google.com",
+      loading: false,
+      ownerThreadId: "thread-chief",
+      ownerBotId: "chief",
+    };
+    const substackTab: BrowserTab = {
+      id: "tab-substack",
+      title: "Substack | Chat",
+      url: "https://substack.com/chat",
+      loading: false,
+      ownerThreadId: "thread-chief",
+      ownerBotId: "chief",
+    };
+    let resolveInitialState: (state: { tabs: BrowserTab[]; activeTabId: string | null }) => void = () => undefined;
+    vi.mocked(window.lunabot.browser.getDisplayState).mockReturnValueOnce(
+      new Promise((resolve) => {
+        resolveInitialState = resolve;
+      }),
+    );
+
+    render(() => <App />);
+    await screen.findByRole("heading", { name: "Chief" });
+    await waitFor(() => expect(window.lunabot.browser.getDisplayState).toHaveBeenCalledTimes(1));
+    emitAgentEvent?.({
+      type: "browser-changed",
+      tabs: [googleTab, substackTab],
+      activeTabId: substackTab.id,
+    });
+    await fireEvent.click(screen.getByRole("button", { name: "Open computer" }));
+    const substackTrigger = await screen.findByRole("tab", { name: "Substack | Chat" });
+    expect(substackTrigger).toHaveAttribute("aria-selected", "true");
+
+    resolveInitialState({ tabs: [googleTab], activeTabId: googleTab.id });
+
+    await waitFor(() => expect(substackTrigger).toHaveAttribute("aria-selected", "true"));
+    expect(screen.getByRole("tab", { name: "Google" })).toHaveAttribute("aria-selected", "false");
+    expect(screen.getByRole("textbox", { name: "Browser address" })).toHaveValue("https://substack.com/chat");
+  });
+
+  it("restores the active embedded browser tab from the local display state", async () => {
+    const firstTab: BrowserTab = {
+      id: "tab-first",
+      title: "First tab",
+      url: "https://example.com/first",
+      loading: false,
+      ownerThreadId: "thread-chief",
+      ownerBotId: "chief",
+    };
+    const activeTab: BrowserTab = {
+      id: "tab-active",
+      title: "Active tab",
+      url: "https://example.com/active",
+      loading: false,
+      ownerThreadId: "thread-chief",
+      ownerBotId: "chief",
+    };
+    vi.mocked(window.lunabot.browser.getDisplayState).mockResolvedValueOnce({
+      tabs: [firstTab, activeTab],
+      activeTabId: activeTab.id,
+    });
+
+    render(() => <App />);
+    await screen.findByRole("heading", { name: "Chief" });
+    await fireEvent.click(screen.getByRole("button", { name: "Open computer" }));
+
+    expect(await screen.findByRole("tab", { name: "Active tab" })).toHaveAttribute("aria-selected", "true");
+    expect(screen.getByRole("tab", { name: "First tab" })).toHaveAttribute("aria-selected", "false");
+    expect(screen.getByRole("textbox", { name: "Browser address" })).toHaveValue("https://example.com/active");
+  });
+
+  it("restores desktop Picture in Picture per conversation without overriding it during agent control", async () => {
+    window.localStorage.setItem("lunabot:browser-pip-native-bounds", "640,320,460,340");
+    render(() => <App />);
+    await screen.findByRole("heading", { name: "Chief" });
+    emitAgentEvent?.({
+      type: "browser-changed",
+      tabs: [
+        {
+          id: "tab-pip-restore",
+          title: "Restored PiP",
+          url: "https://example.com",
+          loading: false,
+          ownerThreadId: "thread-chief",
+          ownerBotId: "chief",
+        },
+      ],
+      activeTabId: "tab-pip-restore",
+    });
+    await fireEvent.click(screen.getByRole("button", { name: "Open computer" }));
+    await fireEvent.click(screen.getByRole("button", { name: "Pop the browser into Picture in Picture" }));
+    await waitFor(() =>
+      expect(window.lunabot.browser.openPictureInPicture).toHaveBeenLastCalledWith({
+        x: 640,
+        y: 320,
+        width: 460,
+        height: 340,
+      }),
+    );
+
+    emitAgentEvent?.({
+      type: "browser-control-changed",
+      state: {
+        sessions: [
+          {
+            id: "thread-chief:turn-pip",
+            threadId: "thread-chief",
+            turnId: "turn-pip",
+            callId: "call-pip",
+            tabId: "tab-pip-restore",
+            action: "click",
+            phase: "acting",
+            startedAt: "2026-08-24T08:00:00.000Z",
+          },
+        ],
+      },
+    });
+    expect(screen.queryByRole("complementary", { name: "Browser" })).not.toBeInTheDocument();
+    await fireEvent.click(screen.getByRole("button", { name: /Sales Outbound/ }));
+    await waitFor(() => expect(window.lunabot.browser.closePictureInPicture).toHaveBeenCalled());
+    await fireEvent.click(screen.getByRole("button", { name: /Chief/ }));
+    await waitFor(() => expect(window.lunabot.browser.openPictureInPicture).toHaveBeenCalledTimes(2));
+  });
+  it("shows the browser control indicator only while an agent acts", async () => {
+    render(() => <App />);
+    await screen.findByRole("heading", { name: "Chief" });
+    emitAgentEvent?.({
+      type: "browser-changed",
+      tabs: [
+        {
+          id: "tab-1",
+          title: "Local smoke page",
+          url: "http://127.0.0.1:4321",
+          loading: false,
+          ownerThreadId: "thread-chief",
+          ownerBotId: "chief",
+        },
+        {
+          id: "tab-2",
+          title: "Second page",
+          url: "https://example.com/second",
+          loading: false,
+          ownerThreadId: "thread-chief",
+          ownerBotId: "chief",
+        },
+        {
+          id: "tab-3",
+          title: "Third page",
+          url: "https://example.com/third",
+          loading: false,
+          ownerThreadId: "thread-chief",
+          ownerBotId: "chief",
+        },
+      ],
+      activeTabId: "tab-1",
+    });
+    emitAgentEvent?.({
+      type: "browser-control-changed",
+      state: {
+        sessions: [
+          {
+            id: "thread-chief:turn-1",
+            threadId: "thread-chief",
+            turnId: "turn-1",
+            callId: "call-1",
+            tabId: null,
+            action: "type",
+            phase: "acting",
+            startedAt: "2026-08-12T10:00:00.000Z",
+          },
+        ],
+      },
+    });
+
+    expect(screen.queryByRole("complementary", { name: "Browser" })).not.toBeInTheDocument();
+    const browserControl = screen.getByRole("button", { name: "The browser is under Chief's control" });
+    expect(browserControl).toHaveAttribute("aria-expanded", "false");
+    expect(window.lunabot.browser.open).not.toHaveBeenCalled();
+
+    await fireEvent.click(browserControl);
+    const controlledTab = await screen.findByRole("tab", {
+      name: "Local smoke page, driven by Chief",
+    });
+    expect(controlledTab).toHaveAttribute("aria-description", "To close, use Delete or Control/Command W");
+    expect(screen.getAllByRole("tab")).toHaveLength(3);
+    await fireEvent.keyDown(screen.getByRole("tab", { name: "Third page" }), { key: "Delete" });
+    expect(window.lunabot.browser.close).toHaveBeenCalledWith("tab-3");
+    await fireEvent.click(screen.getByRole("button", { name: "New browser tab" }));
+    expect(window.lunabot.browser.open).toHaveBeenCalledWith({
+      url: "https://www.google.com",
+      ownerThreadId: "thread-chief",
+      ownerBotId: "chief",
+      focus: true,
+    });
+    expect(screen.queryByText("Typing…")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "The browser is under Chief's control" })).toHaveAttribute(
+      "aria-expanded",
+      "true",
+    );
+
+    emitAgentEvent?.({
+      type: "browser-control-changed",
+      state: {
+        sessions: [
+          {
+            id: "thread-chief:turn-1",
+            threadId: "thread-chief",
+            turnId: "turn-1",
+            callId: "call-1",
+            tabId: "tab-1",
+            action: "type",
+            phase: "waiting",
+            startedAt: "2026-08-12T10:00:00.000Z",
+          },
+        ],
+      },
+    });
+    expect(screen.queryByRole("button", { name: "The browser is under Chief's control" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Hide computer" })).toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: "Local smoke page" })).toBe(controlledTab);
+
+    emitAgentEvent?.({
+      type: "browser-control-changed",
+      state: {
+        sessions: [
+          {
+            id: "thread-chief:turn-1",
+            threadId: "thread-chief",
+            turnId: "turn-1",
+            callId: "call-1",
+            tabId: "tab-1",
+            action: "type",
+            phase: "waiting",
+            startedAt: "2026-08-12T10:00:00.000Z",
+          },
+          {
+            id: "thread-chief:turn-2",
+            threadId: "thread-chief",
+            turnId: "turn-2",
+            callId: "call-2",
+            tabId: "tab-1",
+            action: "click",
+            phase: "acting",
+            startedAt: "2026-08-12T10:00:01.000Z",
+          },
+        ],
+      },
+    });
+    expect(screen.getByRole("tab", { name: "Local smoke page, driven by Chief" })).toBe(controlledTab);
+
+    emitAgentEvent?.({ type: "browser-control-changed", state: { sessions: [] } });
+    expect(screen.getByRole("tab", { name: "Local smoke page" })).toBe(controlledTab);
+  });
+
+  it("coalesces repeated empty-browser opens and does not reopen the panel after a late response", async () => {
+    const openedTab: BrowserTab = {
+      id: "tab-delayed",
+      title: "Delayed page",
+      url: "https://www.google.com",
+      loading: false,
+      ownerThreadId: "thread-chief",
+      ownerBotId: "chief",
+    };
+    let resolveOpen: ((tab: BrowserTab) => void) | undefined;
+    vi.mocked(window.lunabot.browser.open).mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolveOpen = resolve;
+        }),
+    );
+
+    render(() => <App />);
+    await screen.findByRole("heading", { name: "Chief" });
+
+    await fireEvent.click(screen.getByRole("button", { name: "Open computer" }));
+    expect(await screen.findByRole("complementary", { name: "Browser" })).toBeInTheDocument();
+    expect(window.lunabot.browser.open).toHaveBeenCalledTimes(1);
+
+    await fireEvent.click(screen.getByRole("button", { name: "Hide computer" }));
+    await fireEvent.click(screen.getByRole("button", { name: "Open computer" }));
+    await fireEvent.click(screen.getByRole("button", { name: "Hide computer" }));
+    expect(window.lunabot.browser.open).toHaveBeenCalledTimes(1);
+    expect(screen.queryByRole("complementary", { name: "Browser" })).not.toBeInTheDocument();
+
+    emitAgentEvent?.({ type: "browser-changed", tabs: [openedTab], activeTabId: openedTab.id });
+    resolveOpen?.(openedTab);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(screen.queryByRole("complementary", { name: "Browser" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Open computer" })).toHaveAttribute("aria-expanded", "false");
+    expect(window.lunabot.browser.open).toHaveBeenCalledTimes(1);
+
+    await fireEvent.click(screen.getByRole("button", { name: "Open computer" }));
+    expect(await screen.findByRole("tab", { name: "Delayed page" })).toHaveAttribute("aria-selected", "true");
+    await fireEvent.click(screen.getByRole("button", { name: "Reload page" }));
+    expect(window.lunabot.browser.reload).toHaveBeenCalledWith(openedTab.id);
+
+    await fireEvent.click(screen.getByRole("button", { name: "Hide computer" }));
+    await fireEvent.click(screen.getByRole("button", { name: "Open computer" }));
+    expect(await screen.findByRole("tab", { name: "Delayed page" })).toHaveAttribute("aria-selected", "true");
+    expect(window.lunabot.browser.open).toHaveBeenCalledTimes(1);
+  });
+
+  it("allows a replacement when a loading browser tab is closed before its open request settles", async () => {
+    const loadingTab: BrowserTab = {
+      id: "tab-loading",
+      title: "Loading…",
+      url: "https://www.google.com/",
+      loading: true,
+      ownerThreadId: "thread-chief",
+      ownerBotId: "chief",
+    };
+    let resolveFirstOpen: ((tab: BrowserTab) => void) | undefined;
+    vi.mocked(window.lunabot.browser.open).mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolveFirstOpen = resolve;
+        }),
+    );
+
+    render(() => <App />);
+    await screen.findByRole("heading", { name: "Chief" });
+
+    await fireEvent.click(screen.getByRole("button", { name: "Open computer" }));
+    expect(window.lunabot.browser.open).toHaveBeenCalledTimes(1);
+
+    emitAgentEvent?.({ type: "browser-changed", tabs: [loadingTab], activeTabId: loadingTab.id });
+    const tab = await screen.findByRole("tab", { name: "Loading…" });
+    await fireEvent.keyDown(tab, { key: "Delete" });
+    expect(window.lunabot.browser.close).toHaveBeenCalledWith(loadingTab.id);
+
+    emitAgentEvent?.({ type: "browser-changed", tabs: [], activeTabId: null });
+    await waitFor(() => expect(screen.queryByRole("complementary", { name: "Browser" })).not.toBeInTheDocument());
+
+    await fireEvent.click(screen.getByRole("button", { name: "Open computer" }));
+    expect(window.lunabot.browser.open).toHaveBeenCalledTimes(2);
+
+    resolveFirstOpen?.(loadingTab);
+  });
+
+  it("reveals the requested browser tab and resumes the agent from the takeover card", async () => {
+    render(() => <App />);
+    await screen.findByRole("heading", { name: "Chief" });
+    await confirmOnboardingModel();
+    await waitFor(() => expect(emitAgentEvent).toBeDefined());
+    emitAgentEvent?.({
+      type: "browser-changed",
+      tabs: [
+        {
+          id: "tab-public",
+          title: "Public page",
+          url: "https://example.com",
+          loading: false,
+          ownerThreadId: "thread-chief",
+          ownerBotId: "chief",
+        },
+        {
+          id: "tab-login",
+          title: "Sign in",
+          url: "https://example.com/login",
+          loading: false,
+          ownerThreadId: "thread-chief",
+          ownerBotId: "chief",
+        },
+      ],
+      activeTabId: "tab-public",
+    });
+    emitAgentEvent?.({
+      type: "browser-takeover-requested",
+      request: {
+        requestId: "takeover-1",
+        botId: "chief",
+        threadId: "thread-chief",
+        turnId: "turn-1",
+        tabId: "tab-login",
+      },
+    });
+
+    expect(await screen.findByRole("region", { name: "Browser takeover" })).toHaveTextContent("Action required");
+    expect(screen.getByRole("heading", { name: "Finish this step on example.com" })).toBeVisible();
+    expect(await screen.findByRole("img", { name: "Preview of Sign in" })).toBeVisible();
+    expect(await screen.findByRole("complementary", { name: "Browser" })).toBeVisible();
+    await waitFor(() => expect(window.lunabot.browser.activate).toHaveBeenCalledWith("tab-login"));
+    expect(window.lunabot.browser.capturePreview).toHaveBeenCalledTimes(1);
+    expect(window.lunabot.browser.capturePreview).toHaveBeenCalledWith("tab-login");
+    expect(screen.queryByRole("textbox", { name: "Message Chief" })).not.toBeInTheDocument();
+
+    await fireEvent.click(screen.getByRole("button", { name: "I’m done" }));
+    await waitFor(() =>
+      expect(window.lunabot.agent.respondToBrowserTakeover).toHaveBeenCalledWith({
+        requestId: "takeover-1",
+        decision: "complete",
+      }),
+    );
+    await waitFor(() => expect(screen.queryByRole("region", { name: "Browser takeover" })).not.toBeInTheDocument());
+    const completedCard = await screen.findByRole("region", { name: "Browser takeover complete" });
+    expect(completedCard).toHaveTextContent("Done");
+    expect(within(completedCard).getByRole("img", { name: "Preview of Sign in" })).toBeVisible();
+    expect(within(completedCard).queryByRole("button")).not.toBeInTheDocument();
+    expect(screen.getByRole("textbox", { name: "Message Chief" })).toBeVisible();
+  });
+
+  it("keeps browser takeover actions available when the preview fails", async () => {
+    vi.mocked(window.lunabot.browser.capturePreview).mockRejectedValueOnce(new Error("Preview unavailable"));
+    render(() => <App />);
+    await screen.findByRole("heading", { name: "Chief" });
+    await confirmOnboardingModel();
+    await waitFor(() => expect(emitAgentEvent).toBeDefined());
+    emitAgentEvent?.({
+      type: "browser-changed",
+      tabs: [
+        {
+          id: "tab-login",
+          title: "Sign in",
+          url: "https://example.com/login",
+          loading: false,
+          ownerThreadId: "thread-chief",
+          ownerBotId: "chief",
+        },
+      ],
+      activeTabId: "tab-login",
+    });
+    emitAgentEvent?.({
+      type: "browser-takeover-requested",
+      request: {
+        requestId: "takeover-preview-failed",
+        botId: "chief",
+        threadId: "thread-chief",
+        turnId: "turn-preview-failed",
+        tabId: "tab-login",
+      },
+    });
+
+    const card = await screen.findByRole("region", { name: "Browser takeover" });
+    await waitFor(() => expect(within(card).queryByRole("img")).not.toBeInTheDocument());
+    await fireEvent.click(within(card).getByRole("button", { name: "Cancel" }));
+    await waitFor(() =>
+      expect(window.lunabot.agent.respondToBrowserTakeover).toHaveBeenCalledWith({
+        requestId: "takeover-preview-failed",
+        decision: "cancel",
+      }),
+    );
+    const cancelledCard = await screen.findByRole("region", { name: "Browser takeover cancelled" });
+    expect(cancelledCard).toHaveTextContent("Cancelled");
+    expect(within(cancelledCard).queryByRole("button")).not.toBeInTheDocument();
+  });
+
+  it("coalesces repeated tab closes and ignores navigation while a close is pending", async () => {
+    let resolveClose: (() => void) | undefined;
+    vi.mocked(window.lunabot.browser.close).mockImplementationOnce(
+      () =>
+        new Promise<void>((resolve) => {
+          resolveClose = resolve;
+        }),
+    );
+    render(() => <App />);
+    await screen.findByRole("heading", { name: "Chief" });
+    const firstTab = {
+      id: "tab-shortcut-1",
+      title: "First page",
+      url: "https://example.com/first",
+      loading: false,
+      ownerThreadId: "thread-chief",
+      ownerBotId: "chief",
+    };
+    const secondTab = {
+      id: "tab-shortcut-2",
+      title: "Second page",
+      url: "https://example.com/second",
+      loading: false,
+      ownerThreadId: "thread-chief",
+      ownerBotId: "chief",
+    };
+    emitAgentEvent?.({
+      type: "browser-changed",
+      tabs: [firstTab, secondTab],
+      activeTabId: secondTab.id,
+    });
+
+    await fireEvent.click(screen.getByRole("button", { name: "Open computer" }));
+    await screen.findByRole("complementary", { name: "Browser" });
+    const closingTab = await screen.findByRole("tab", { name: "Second page" });
+    await fireEvent.pointerDown(closingTab, { button: 1 });
+    await fireEvent.pointerDown(closingTab, { button: 1 });
+    expect(window.lunabot.browser.close).toHaveBeenCalledWith(secondTab.id);
+    expect(window.lunabot.browser.close).toHaveBeenCalledTimes(1);
+
+    await fireEvent.click(screen.getByRole("button", { name: "Go back" }));
+    expect(window.lunabot.browser.navigate).not.toHaveBeenCalled();
+
+    resolveClose?.();
+    await waitFor(() => expect(screen.queryByRole("tab", { name: "Second page" })).not.toBeInTheDocument());
+    expect(screen.getByRole("tab", { name: "First page" })).toHaveAttribute("aria-selected", "true");
+  });
+
+  it("waits for tab activation before it closes the same tab", async () => {
+    let resolveActivation: (() => void) | undefined;
+    vi.mocked(window.lunabot.browser.activate).mockImplementationOnce(
+      () =>
+        new Promise<void>((resolve) => {
+          resolveActivation = resolve;
+        }),
+    );
+    render(() => <App />);
+    await screen.findByRole("heading", { name: "Chief" });
+    const firstTab = {
+      id: "tab-activation-first",
+      title: "First activation page",
+      url: "https://example.com/first",
+      loading: false,
+      ownerThreadId: "thread-chief",
+      ownerBotId: "chief",
+    };
+    const secondTab = {
+      id: "tab-activation-closing",
+      title: "Closing activation page",
+      url: "https://example.com/closing",
+      loading: false,
+      ownerThreadId: "thread-chief",
+      ownerBotId: "chief",
+    };
+    emitAgentEvent?.({
+      type: "browser-changed",
+      tabs: [firstTab, secondTab],
+      activeTabId: firstTab.id,
+    });
+
+    await fireEvent.click(screen.getByRole("button", { name: "Open computer" }));
+    const closingTab = await screen.findByRole("tab", { name: "Closing activation page" });
+    await fireEvent.click(closingTab);
+    await waitFor(() => expect(window.lunabot.browser.activate).toHaveBeenCalledWith(secondTab.id));
+    await fireEvent.keyDown(closingTab, { key: "Delete" });
+    expect(window.lunabot.browser.close).not.toHaveBeenCalled();
+
+    resolveActivation?.();
+    await waitFor(() => expect(window.lunabot.browser.close).toHaveBeenCalledWith(secondTab.id));
+  });
+
+  it("keeps the browser open when a new tab replaces the last tab during its delayed close", async () => {
+    let resolveClose: (() => void) | undefined;
+    vi.mocked(window.lunabot.browser.close).mockImplementationOnce(
+      () =>
+        new Promise<void>((resolve) => {
+          resolveClose = resolve;
+        }),
+    );
+    render(() => <App />);
+    await screen.findByRole("heading", { name: "Chief" });
+    const closingTab = {
+      id: "tab-closing-last",
+      title: "Closing page",
+      url: "https://example.com/closing",
+      loading: false,
+      ownerThreadId: "thread-chief",
+      ownerBotId: "chief",
+    };
+    const replacementTab = {
+      id: "tab-replacement",
+      title: "Replacement page",
+      url: "https://example.com/replacement",
+      loading: false,
+      ownerThreadId: "thread-chief",
+      ownerBotId: "chief",
+    };
+    emitAgentEvent?.({ type: "browser-changed", tabs: [closingTab], activeTabId: closingTab.id });
+    await fireEvent.click(screen.getByRole("button", { name: "Open computer" }));
+    await fireEvent.keyDown(await screen.findByRole("tab", { name: "Closing page" }), { key: "Delete" });
+    await waitFor(() => expect(resolveClose).toBeDefined());
+
+    emitAgentEvent?.({ type: "browser-changed", tabs: [replacementTab], activeTabId: replacementTab.id });
+    expect(await screen.findByRole("tab", { name: "Replacement page" })).toBeInTheDocument();
+    resolveClose?.();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(screen.getByRole("complementary", { name: "Browser" })).toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: "Replacement page" })).toBeInTheDocument();
+  });
+
+  it("closes the browser panel when its last tab is closed from the embedded page", async () => {
+    render(() => <App />);
+    await screen.findByRole("heading", { name: "Chief" });
+    emitAgentEvent?.({
+      type: "browser-changed",
+      tabs: [
+        {
+          id: "tab-embedded-shortcut",
+          title: "Focused page",
+          url: "https://example.com",
+          loading: false,
+          ownerThreadId: "thread-chief",
+          ownerBotId: "chief",
+        },
+      ],
+      activeTabId: "tab-embedded-shortcut",
+    });
+    await fireEvent.click(screen.getByRole("button", { name: "Open computer" }));
+    expect(await screen.findByRole("complementary", { name: "Browser" })).toBeInTheDocument();
+
+    emitAgentEvent?.({ type: "browser-changed", tabs: [], activeTabId: null });
+
+    await waitFor(() => expect(screen.queryByRole("complementary", { name: "Browser" })).not.toBeInTheDocument());
+    expect(window.lunabot.browser.setVisible).toHaveBeenLastCalledWith({ visible: false });
+  });
+
+  it("updates embedded browser bounds when the window moves browser surface", async () => {
+    render(() => <App />);
+    await screen.findByRole("heading", { name: "Chief" });
+    emitAgentEvent?.({
+      type: "browser-changed",
+      tabs: [
+        {
+          id: "tab-resize",
+          title: "Resize test",
+          url: "https://example.com",
+          loading: false,
+          ownerThreadId: "thread-chief",
+          ownerBotId: "chief",
+        },
+      ],
+      activeTabId: "tab-resize",
+    });
+    await fireEvent.click(screen.getByRole("button", { name: "Open computer" }));
+    const surface = document.querySelector(".browser-surface");
+    if (!(surface instanceof HTMLElement)) throw new Error("Browser surface was not rendered.");
+    await waitFor(() =>
+      expect(window.lunabot.browser.setVisible).toHaveBeenCalledWith(expect.objectContaining({ visible: true })),
+    );
+    vi.mocked(window.lunabot.browser.setVisible).mockClear();
+    vi.spyOn(surface, "getBoundingClientRect").mockReturnValue({
+      x: 640,
+      y: 73,
+      width: 380,
+      height: 600,
+      top: 73,
+      right: 1020,
+      bottom: 673,
+      left: 640,
+      toJSON: () => ({}),
+    });
+
+    window.dispatchEvent(new Event("resize"));
+
+    await waitFor(() =>
+      expect(window.lunabot.browser.setVisible).toHaveBeenLastCalledWith({
+        visible: true,
+        target: "main",
+        bounds: { x: 640, y: 73, width: 380, height: 600 },
+      }),
+    );
+  });
+
+  it("closes settings on agent switch but restores browser panels", async () => {
+    render(() => <App />);
+    await screen.findByRole("heading", { name: "Chief" });
+
+    await fireEvent.click(screen.getByRole("button", { name: "View agent settings" }));
+    expect(await screen.findByRole("complementary", { name: "Agent settings" })).toBeInTheDocument();
+
+    await fireEvent.click(screen.getByRole("button", { name: /Sales Outbound/ }));
+    expect(screen.queryByRole("complementary", { name: "Agent settings" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Open computer" })).toBeInTheDocument();
+
+    await fireEvent.click(screen.getByRole("button", { name: "Open computer" }));
+    expect(await screen.findByRole("complementary", { name: "Browser" })).toBeInTheDocument();
+
+    await fireEvent.click(screen.getByRole("button", { name: /Chief/ }));
+    expect(screen.queryByRole("complementary", { name: "Agent settings" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("complementary", { name: "Browser" })).not.toBeInTheDocument();
+
+    await fireEvent.click(screen.getByRole("button", { name: /Sales Outbound/ }));
+    expect(await screen.findByRole("complementary", { name: "Browser" })).toBeInTheDocument();
+  });
+
+  it("opens workspace Markdown in the right sidebar and keeps external opening explicit", async () => {
+    const workspacePath = "/tmp/LunaBot/Bots/chief/recipe-tomato-basil-pasta.md";
+    const sharedPath = "/tmp/LunaBot/Shared/menu.txt";
+    vi.mocked(window.lunabot.agent.readConversation).mockImplementation(async (botId) => ({
+      botId,
+      threadId: botId === "chief" ? "thread-chief" : null,
+      activeTurnId: null,
+      revision: 1,
+      messages:
+        botId === "chief"
+          ? [
+              {
+                id: "message-file-preview",
+                author: "assistant",
+                text: `Created [recipe-tomato-basil-pasta.md](${workspacePath}) and [menu.txt](${sharedPath}).`,
+                createdAt: "2026-08-24T12:16:00.000Z",
+                status: "completed",
+              },
+            ]
+          : [],
+      readState: { unreadCount: 0, firstUnreadMessageId: null, throughMessageId: null },
+    }));
+    vi.mocked(window.lunabot.agent.previewWorkspaceFile).mockResolvedValueOnce({
+      name: "recipe-tomato-basil-pasta.md",
+      size: 41,
+      mimeType: "text/plain",
+      previewKind: "markdown",
+      bytes: new TextEncoder().encode("# Tomato Basil Pasta\n\nUse **fresh basil**."),
+    });
+    vi.mocked(window.lunabot.agent.previewSharedFile).mockResolvedValueOnce({
+      name: "menu.txt",
+      size: 12,
+      mimeType: "text/plain",
+      previewKind: "text",
+      bytes: new TextEncoder().encode("Pasta menu"),
+    });
+
+    render(() => <App />);
+    await fireEvent.click(
+      await screen.findByRole("button", { name: "Open recipe-tomato-basil-pasta.md from the workspace" }),
+    );
+
+    expect(await screen.findByRole("complementary", { name: "File preview" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { level: 1, name: "Tomato Basil Pasta" })).toBeInTheDocument();
+    expect(screen.getByText("fresh basil").tagName).toBe("STRONG");
+    expect(window.lunabot.agent.previewWorkspaceFile).toHaveBeenCalledWith({ botId: "chief", path: workspacePath });
+    expect(window.lunabot.agent.openWorkspaceFile).not.toHaveBeenCalled();
+    expect(window.lunabot.browser.setVisible).toHaveBeenLastCalledWith({ visible: false });
+
+    await fireEvent.click(screen.getByRole("button", { name: "Open file externally" }));
+    expect(window.lunabot.agent.openWorkspaceFile).toHaveBeenCalledWith({ botId: "chief", path: workspacePath });
+    await fireEvent.click(screen.getByRole("button", { name: "Close file preview" }));
+    expect(screen.queryByRole("complementary", { name: "File preview" })).not.toBeInTheDocument();
+
+    await fireEvent.click(screen.getByRole("button", { name: "Open the file menu.txt that was shared" }));
+    expect(await screen.findByText("Pasta menu")).toBeInTheDocument();
+    expect(window.lunabot.agent.previewSharedFile).toHaveBeenCalledWith({ path: sharedPath });
+    expect(window.lunabot.agent.openSharedFile).not.toHaveBeenCalled();
+  });
+
+  it("queues from the composer and clears only after success", async () => {
+    render(() => <App />);
+    await confirmOnboardingModel();
+    const composer = await screen.findByRole("textbox", { name: "Message Chief" });
+    composer.textContent = "Run this Monday";
+    await fireEvent.input(composer);
+    await fireEvent.keyDown(composer, { key: "Enter" });
+    await waitFor(() =>
+      expect(window.lunabot.agent.sendMessage).toHaveBeenCalledWith({
+        botId: "chief",
+        text: "Run this Monday",
+        attachmentDraftIds: [],
+      }),
+    );
+    await waitFor(() =>
+      expect(window.lunabot.agent.markConversationRead).toHaveBeenCalledWith({
+        botId: "chief",
+        throughMessageId: "delivery-1",
+      }),
+    );
+    await waitFor(() => expect(composer).toHaveTextContent(""));
+  });
+
+  it("does not read an earlier agent reply again after sending a message", async () => {
+    render(() => <App />);
+    await screen.findByRole("heading", { name: "Chief" });
+    emitAgentEvent?.({
+      type: "conversation",
+      snapshot: {
+        botId: "chief",
+        threadId: "thread-chief",
+        activeTurnId: null,
+        revision: 1,
+        messages: [
+          {
+            id: "assistant-before-send",
+            author: "assistant",
+            text: "Earlier agent reply",
+            createdAt: "2026-08-12T10:00:00.000Z",
+            status: "completed",
+          },
+        ],
+      },
+    });
+    await screen.findByText("Earlier agent reply");
+    await waitFor(() => expect(window.lunabot.agent.markConversationRead).toHaveBeenCalled());
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    vi.mocked(window.lunabot.agent.markConversationRead).mockClear();
+
+    const composer = screen.getByRole("textbox", { name: "Message Chief" });
+    composer.textContent = "Continue this work";
+    await fireEvent.input(composer);
+    await fireEvent.keyDown(composer, { key: "Enter" });
+
+    await waitFor(() =>
+      expect(window.lunabot.agent.markConversationRead).toHaveBeenCalledWith({
+        botId: "chief",
+        throughMessageId: "delivery-1",
+      }),
+    );
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(vi.mocked(window.lunabot.agent.markConversationRead).mock.calls).toEqual([
+      [{ botId: "chief", throughMessageId: "delivery-1" }],
+    ]);
+  });
+
+  it("keeps a queued message out of chat until work starts", async () => {
+    vi.mocked(window.lunabot.agent.sendMessage).mockImplementationOnce(async (input) => {
+      const delivery = queuedDelivery("delivery-visible", input.text, 1);
+      emitAgentEvent?.({
+        type: "conversation",
+        snapshot: {
+          botId: input.botId,
+          threadId: "thread-chief",
+          activeTurnId: null,
+          revision: 1,
+          messages: [
+            {
+              id: delivery.id,
+              author: "user",
+              text: input.text,
+              createdAt: delivery.createdAt,
+              status: "completed",
+              delivery: { id: delivery.id, status: "queued", position: 1 },
+            },
+          ],
+        },
+      });
+      emitAgentEvent?.({
+        type: "queue-changed",
+        snapshot: { botId: input.botId, deliveries: [delivery] },
+      });
+      return {
+        messageId: delivery.messageId,
+        deliveries: [{ id: delivery.id, recipientBotId: input.botId, status: "queued", position: 1 }],
+      };
+    });
+
+    render(() => <App />);
+    await confirmOnboardingModel();
+    const composer = await screen.findByRole("textbox", { name: "Message Chief" });
+    composer.textContent = "Show this message";
+    await fireEvent.input(composer);
+    await fireEvent.keyDown(composer, { key: "Enter" });
+
+    await waitFor(() => expect(window.lunabot.agent.sendMessage).toHaveBeenCalledOnce());
+    expect(screen.queryByText("Show this message", { selector: ".agent-queue-message" })).not.toBeInTheDocument();
+    expect(document.querySelector(".agent-queue-panel")).toBeNull();
+    expect(screen.queryByText("Show this message", { selector: ".message-copy" })).not.toBeInTheDocument();
+    await waitFor(() => {
+      expect(screen.queryByText("Choose a model to get started.")).not.toBeInTheDocument();
+      expect(
+        screen.queryByRole("radiogroup", { name: "What do you want me helping with most?" }),
+      ).not.toBeInTheDocument();
+    });
+
+    const started = queuedDelivery("delivery-visible", "Show this message", null, { status: "starting" });
+    emitAgentEvent?.({
+      type: "conversation",
+      snapshot: {
+        botId: "chief",
+        threadId: "thread-chief",
+        activeTurnId: null,
+        revision: 2,
+        messages: [
+          {
+            id: started.id,
+            author: "user",
+            text: started.text,
+            createdAt: started.createdAt,
+            status: "completed",
+            delivery: { id: started.id, status: "starting", position: null },
+          },
+        ],
+      },
+    });
+    emitAgentEvent?.({
+      type: "queue-changed",
+      snapshot: { botId: "chief", deliveries: [started] },
+    });
+
+    expect(await screen.findByText("Show this message", { selector: ".message-copy" })).toBeInTheDocument();
+    expect(screen.queryByText("Show this message", { selector: ".agent-queue-message" })).not.toBeInTheDocument();
+  });
+
+  it("replies to a message through the composer and keeps the reference in the queued input", async () => {
+    render(() => <App />);
+    await screen.findByRole("heading", { name: "Chief" });
+    emitAgentEvent?.({
+      type: "conversation",
+      snapshot: {
+        botId: "chief",
+        threadId: "thread-chief",
+        activeTurnId: null,
+        revision: 1,
+        messages: [
+          {
+            id: "assistant-1",
+            author: "assistant",
+            text: "Should I prepare the report?",
+            createdAt: "2026-08-12T10:00:00.000Z",
+            status: "completed",
+          },
+        ],
+      },
+    });
+
+    await screen.findByText("Should I prepare the report?");
+    await fireEvent.click(screen.getByRole("button", { name: "Reply to Agent message" }));
+    expect(screen.getByText("Replying to Agent")).toBeInTheDocument();
+
+    const composer = screen.getByRole("textbox", { name: "Message Chief" });
+    composer.textContent = "Yes, today please";
+    await fireEvent.input(composer);
+    await fireEvent.keyDown(composer, { key: "Enter" });
+    await waitFor(() =>
+      expect(window.lunabot.agent.sendMessage).toHaveBeenCalledWith({
+        botId: "chief",
+        text: "Yes, today please",
+        attachmentDraftIds: [],
+        replyToMessageId: "assistant-1",
+      }),
+    );
+    await waitFor(() => expect(screen.queryByText("Replying to Agent")).not.toBeInTheDocument());
+  });
+
+  it("sends an action for selected agent text without clearing the composer draft", async () => {
+    render(() => <App />);
+    await screen.findByRole("heading", { name: "Chief" });
+    const answer = "The launch note needs a friendlier closing sentence.";
+    emitAgentEvent?.({
+      type: "conversation",
+      snapshot: {
+        botId: "chief",
+        threadId: "thread-chief",
+        activeTurnId: null,
+        revision: 1,
+        messages: [
+          {
+            id: "assistant-selection",
+            author: "assistant",
+            text: answer,
+            createdAt: "2026-08-12T10:00:00.000Z",
+            status: "completed",
+          },
+        ],
+      },
+    });
+
+    const message = await screen.findByText(answer);
+    const composer = screen.getByRole("textbox", { name: "Message Chief" });
+    composer.textContent = "Keep this draft";
+    await fireEvent.input(composer);
+
+    const text = message.firstChild;
+    if (!text) throw new Error("Agent message did not render a text node");
+    const quote = "friendlier closing sentence";
+    const start = answer.indexOf(quote);
+    const range = document.createRange();
+    range.setStart(text, start);
+    range.setEnd(text, start + quote.length);
+    Object.defineProperty(range, "getClientRects", {
+      configurable: true,
+      value: () => [{ top: 100, right: 320, bottom: 120, left: 120, width: 200, height: 20 }],
+    });
+    const selection = window.getSelection();
+    selection?.removeAllRanges();
+    selection?.addRange(range);
+    await fireEvent.pointerUp(message);
+
+    await fireEvent.click(await screen.findByRole("button", { name: "Improve" }));
+    await waitFor(() =>
+      expect(window.lunabot.agent.sendMessage).toHaveBeenCalledWith({
+        botId: "chief",
+        text: "Refine the wording of this selected passage.\n\n> friendlier closing sentence",
+        attachmentDraftIds: [],
+        replyToMessageId: "assistant-selection",
+      }),
+    );
+    expect(composer).toHaveTextContent("Keep this draft");
+  });
+
+  it("reacts and copies from agent hover actions", async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: { writeText },
+    });
+    render(() => <App />);
+    await screen.findByRole("heading", { name: "Chief" });
+    emitAgentEvent?.({
+      type: "conversation",
+      snapshot: {
+        botId: "chief",
+        threadId: "thread-chief",
+        activeTurnId: null,
+        revision: 1,
+        messages: [
+          {
+            id: "assistant-actions",
+            author: "assistant",
+            text: "Ready to ship.",
+            createdAt: "2026-08-12T10:00:00.000Z",
+            status: "completed",
+          },
+        ],
+      },
+    });
+
+    await screen.findByText("Ready to ship.");
+    await fireEvent.pointerDown(screen.getByRole("button", { name: "Add reaction" }), { button: 0 });
+    await fireEvent.pointerUp(screen.getByRole("menuitemradio", { name: "React with ❤️" }), { button: 0 });
+    expect(window.lunabot.agent.setMessageReaction).toHaveBeenCalledWith({
+      botId: "chief",
+      messageId: "assistant-actions",
+      emoji: "❤️",
+    });
+
+    await fireEvent.pointerDown(screen.getByRole("button", { name: "More message actions" }), { button: 0 });
+    await fireEvent.pointerUp(screen.getByRole("menuitem", { name: "Copy" }), { button: 0 });
+    await waitFor(() => expect(writeText).toHaveBeenCalledWith("Ready to ship."));
+  });
+
+  it("lets the user remove only their own reaction while keeping the agent reaction read-only", async () => {
+    render(() => <App />);
+    await screen.findByRole("heading", { name: "Chief" });
+    emitAgentEvent?.({
+      type: "conversation",
+      snapshot: {
+        botId: "chief",
+        threadId: "thread-chief",
+        activeTurnId: null,
+        revision: 1,
+        messages: [
+          {
+            id: "user-reactions",
+            author: "user",
+            text: "The launch is approved.",
+            createdAt: "2026-08-12T10:00:00.000Z",
+            status: "completed",
+            reaction: "❤️",
+            reactions: [
+              { emoji: "❤️", actor: { kind: "user" } },
+              { emoji: "🎉", actor: { kind: "bot", botId: "chief" } },
+            ],
+          },
+        ],
+      },
+    });
+
+    await screen.findByRole("img", { name: "Chief added 🎉" });
+    await fireEvent.click(screen.getByRole("button", { name: "Take back your ❤️ reaction" }));
+    expect(window.lunabot.agent.setMessageReaction).toHaveBeenCalledWith({
+      botId: "chief",
+      messageId: "user-reactions",
+      emoji: null,
+    });
+    expect(screen.getByRole("img", { name: "Chief added 🎉" })).toBeInTheDocument();
+  });
+
+  it("groups commentary into a collapsed thinking disclosure", async () => {
+    render(() => <App />);
+    await screen.findByRole("heading", { name: "Chief" });
+    emitAgentEvent?.({
+      type: "conversation",
+      snapshot: {
+        botId: "chief",
+        threadId: "thread-chief",
+        activeTurnId: null,
+        revision: 1,
+        messages: [
+          {
+            id: "user-open",
+            turnId: "turn-open",
+            author: "user",
+            text: "Open x.com",
+            createdAt: "2026-08-12T10:00:00.000Z",
+            status: "completed",
+          },
+          {
+            id: "commentary-open",
+            turnId: "turn-open",
+            author: "assistant",
+            text: "I’ll open x.com in the Luna Bot browser.",
+            createdAt: "2026-08-12T10:00:01.000Z",
+            status: "completed",
+            itemType: "commentary",
+          },
+          {
+            id: "commentary-check",
+            turnId: "turn-open",
+            author: "assistant",
+            text: "Checking that the page loaded.",
+            createdAt: "2026-08-12T10:00:02.000Z",
+            status: "completed",
+            itemType: "commentary",
+          },
+          {
+            id: "answer-open",
+            turnId: "turn-open",
+            author: "assistant",
+            text: "Opened x.com.",
+            createdAt: "2026-08-12T10:00:03.000Z",
+            status: "completed",
+            itemType: "final_answer",
+          },
+        ],
+      },
+    });
+
+    const thinkingLabel = await screen.findByText("Thinking");
+    const details = thinkingLabel.closest("details");
+    expect(screen.getByText("I’ll open x.com in the Luna Bot browser.")).not.toBeVisible();
+    expect(screen.getByText("Checking that the page loaded.")).not.toBeVisible();
+    expect(screen.getByText("Opened x.com.")).toBeVisible();
+    expect(screen.getAllByText("Thinking")).toHaveLength(1);
+
+    await fireEvent.click(thinkingLabel);
+    expect(details).toHaveAttribute("open");
+    expect(screen.getByText("I’ll open x.com in the Luna Bot browser.")).toBeVisible();
+
+    emitAgentEvent?.({
+      type: "conversation",
+      snapshot: {
+        botId: "chief",
+        threadId: "thread-chief",
+        activeTurnId: null,
+        revision: 2,
+        messages: [
+          {
+            id: "user-open",
+            turnId: "turn-open",
+            author: "user",
+            text: "Open x.com",
+            createdAt: "2026-08-12T10:00:00.000Z",
+            status: "completed",
+          },
+          {
+            id: "answer-open",
+            turnId: "turn-open",
+            author: "assistant",
+            text: "Opened x.com.",
+            createdAt: "2026-08-12T10:00:03.000Z",
+            status: "completed",
+            itemType: "final_answer",
+          },
+        ],
+      },
+    });
+    await waitFor(() => expect(screen.getByText("Thinking").closest("details")).toBe(details));
+    expect(screen.getByText("I’ll open x.com in the Luna Bot browser.")).toBeVisible();
+  });
+
+  it("keeps text and attachments when enqueue fails", async () => {
+    vi.mocked(window.lunabot.agent.sendMessage).mockRejectedValueOnce(new Error("Mailbox unavailable"));
+    render(() => <App />);
+    await confirmOnboardingModel();
+    const composer = await screen.findByRole("textbox", { name: "Message Chief" });
+    composer.textContent = "Retry me";
+    await fireEvent.input(composer);
+    await fireEvent.keyDown(composer, { key: "Enter" });
+    expect(await screen.findByText("Mailbox unavailable")).toBeInTheDocument();
+    expect(composer).toHaveTextContent("Retry me");
+  });
+
+  it("supports picker and attachment-only messages", async () => {
+    const filePickerClick = vi.spyOn(HTMLInputElement.prototype, "click").mockImplementation(() => {});
+    render(() => <App />);
+    await screen.findByRole("heading", { name: "Chief" });
+    await confirmOnboardingModel();
+    await fireEvent.pointerDown(screen.getByRole("button", { name: "Add to prompt" }), { button: 0 });
+    await fireEvent.pointerDown(screen.getByRole("menuitem", { name: /Attach image/ }), { button: 0 });
+    expect(filePickerClick).toHaveBeenCalledTimes(1);
+    expect(document.querySelector<HTMLInputElement>('input[type="file"][accept]')?.accept).toBe(
+      ".png,.jpg,.jpeg,.gif,.webp,.avif",
+    );
+    await fireEvent.pointerDown(screen.getByRole("button", { name: "Add to prompt" }), { button: 0 });
+    await fireEvent.pointerDown(screen.getByRole("menuitem", { name: /Add context/ }), { button: 0 });
+    expect(filePickerClick).toHaveBeenCalledTimes(2);
+    emitAttachmentImport?.({ type: "started", requestId: "picker-1" });
+    emitAttachmentImport?.({
+      type: "completed",
+      requestId: "picker-1",
+      attachments: [attachment("draft-1", "brief.pdf", "pdf")],
+    });
+    expect(await screen.findByText("brief.pdf")).toBeInTheDocument();
+    await fireEvent.click(screen.getByRole("button", { name: "Send message" }));
+    await waitFor(() =>
+      expect(window.lunabot.agent.sendMessage).toHaveBeenCalledWith({
+        botId: "chief",
+        text: "",
+        attachmentDraftIds: ["draft-1"],
+      }),
+    );
+  });
+
+  it("adds pathless pasted images reported by preload", async () => {
+    render(() => <App />);
+    await screen.findByRole("heading", { name: "Chief" });
+    emitAttachmentImport?.({ type: "started", requestId: "paste-1" });
+    emitAttachmentImport?.({
+      type: "completed",
+      requestId: "paste-1",
+      attachments: [attachment("pasted-1", "pasted.png", "image")],
+    });
+    await fireEvent.click(await screen.findByRole("button", { name: "Remove pasted.png" }));
+    await waitFor(() => expect(screen.queryByRole("button", { name: "Remove pasted.png" })).not.toBeInTheDocument());
+    expect(window.lunabot.agent.discardDraftAttachment).toHaveBeenCalledWith("pasted-1");
+  });
+
+  it("keeps an asynchronous pasted attachment with the bot that received the paste", async () => {
+    render(() => <App />);
+    await screen.findByRole("heading", { name: "Chief" });
+    emitAttachmentImport?.({ type: "started", requestId: "paste-switch" });
+    await fireEvent.click(screen.getByRole("button", { name: /Sales Outbound/ }));
+    emitAttachmentImport?.({
+      type: "completed",
+      requestId: "paste-switch",
+      attachments: [attachment("pasted-switch", "for-chief.png", "image")],
+    });
+
+    expect(screen.queryByRole("button", { name: "Remove for-chief.png" })).not.toBeInTheDocument();
+    await fireEvent.click(screen.getByRole("button", { name: /Chief/ }));
+    expect(await screen.findByRole("button", { name: "Remove for-chief.png" })).toBeInTheDocument();
+  });
+
+  it("keeps an asynchronous attachment error with the bot that received the paste", async () => {
+    render(() => <App />);
+    await screen.findByRole("heading", { name: "Chief" });
+    emitAttachmentImport?.({ type: "started", requestId: "paste-error" });
+    await fireEvent.click(screen.getByRole("button", { name: /Sales Outbound/ }));
+    emitAttachmentImport?.({
+      type: "error",
+      requestId: "paste-error",
+      message: "Attachment import failed",
+    });
+
+    expect(screen.queryByText("Attachment import failed")).not.toBeInTheDocument();
+    await fireEvent.click(screen.getByRole("button", { name: /Chief/ }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("Attachment import failed");
+  });
+
+  it("keeps the first delivery out of Queue until work starts", async () => {
+    render(() => <App />);
+    await screen.findByRole("heading", { name: "Chief" });
+    const first = queuedDelivery("delivery-foreground", "Start this work", 1);
+    const second = queuedDelivery("delivery-waiting-1", "Run this second", 2);
+    const third = queuedDelivery("delivery-waiting-2", "Run this third", 3);
+    const fourth = queuedDelivery("delivery-waiting-3", "Run this fourth", 4);
+
+    emitAgentEvent?.({
+      type: "conversation",
+      snapshot: {
+        botId: "chief",
+        threadId: "thread-chief",
+        activeTurnId: null,
+        revision: 1,
+        messages: [
+          {
+            id: first.id,
+            author: "user",
+            text: first.text,
+            createdAt: first.createdAt,
+            status: "completed",
+            delivery: { id: first.id, status: "queued", position: 1 },
+          },
+        ],
+      },
+    });
+    emitAgentEvent?.({
+      type: "queue-changed",
+      snapshot: { botId: "chief", deliveries: [first] },
+    });
+
+    expect(screen.queryByText("Start this work", { selector: ".agent-queue-message" })).not.toBeInTheDocument();
+    expect(document.querySelector(".agent-queue-panel")).toBeNull();
+    expect(screen.queryByText("Start this work", { selector: ".message-copy" })).not.toBeInTheDocument();
+
+    emitAgentEvent?.({
+      type: "queue-changed",
+      snapshot: { botId: "chief", deliveries: [first, second, third, fourth] },
+    });
+    expect(document.querySelector(".agent-queue-panel")).toBeNull();
+
+    const firstStarting = { ...first, status: "starting" as const, position: null, turnId: "turn-queue" };
+    emitAgentEvent?.({
+      type: "queue-changed",
+      snapshot: { botId: "chief", deliveries: [firstStarting, second, third, fourth] },
+    });
+    emitAgentEvent?.({
+      type: "conversation",
+      snapshot: {
+        botId: "chief",
+        threadId: "thread-chief",
+        activeTurnId: "turn-queue",
+        revision: 2,
+        messages: [
+          {
+            id: first.id,
+            turnId: "turn-queue",
+            author: "user",
+            text: first.text,
+            createdAt: first.createdAt,
+            status: "completed",
+            delivery: { id: first.id, status: "starting", position: null },
+          },
+        ],
+      },
+    });
+
+    await screen.findByText("Start this work", { selector: ".message-copy" });
+    await screen.findByRole("status", { name: "Chief is working" });
+    // QueuePanel is lazy-loaded, so the queued rows can appear after the working status.
+    expect(await screen.findByText("Run this second", { selector: ".agent-queue-message" })).toBeInTheDocument();
+    expect(screen.getByText("Run this third", { selector: ".agent-queue-message" })).toBeInTheDocument();
+    expect(screen.getByText("Run this fourth", { selector: ".agent-queue-message" })).toBeInTheDocument();
+    expect(screen.queryByText("Start this work", { selector: ".agent-queue-message" })).not.toBeInTheDocument();
+
+    const firstWaitingRow = document.querySelector<HTMLFieldSetElement>(".agent-queue-item");
+    if (!firstWaitingRow) throw new Error("The first waiting queue row is missing.");
+    await fireEvent.keyDown(firstWaitingRow, { key: "ArrowDown", altKey: true });
+    await waitFor(() =>
+      expect(window.lunabot.agent.reorderQueue).toHaveBeenCalledWith({
+        botId: "chief",
+        deliveryIds: [third.id, second.id, fourth.id],
+      }),
+    );
+
+    emitAgentEvent?.({
+      type: "queue-changed",
+      snapshot: { botId: "chief", deliveries: [firstStarting] },
+    });
+    const queueSlot = document.querySelector<HTMLElement>(".agent-queue-slot");
+    await waitFor(() => expect(document.querySelectorAll(".agent-queue-item-removing")).toHaveLength(3));
+    await waitFor(() => expect(document.querySelector(".agent-queue-panel")).not.toBeInTheDocument());
+    expect(queueSlot).toHaveAttribute("aria-hidden", "true");
+  });
+
+  it("keeps foreground starts out of Queue and hides waiting work between turns", async () => {
+    render(() => <App />);
+    await screen.findByRole("heading", { name: "Chief" });
+    const firstStarting = queuedDelivery("delivery-starting", "Current work", null, { status: "starting" });
+    const second = queuedDelivery("delivery-next", "Next work", 1);
+    const third = queuedDelivery("delivery-later", "Later work", 2);
+
+    emitAgentEvent?.({
+      type: "queue-changed",
+      snapshot: { botId: "chief", deliveries: [firstStarting] },
+    });
+    expect(document.querySelector(".agent-queue-panel")).toBeNull();
+
+    emitAgentEvent?.({
+      type: "queue-changed",
+      snapshot: { botId: "chief", deliveries: [firstStarting, second] },
+    });
+    expect(await screen.findByText("Next work", { selector: ".agent-queue-message" })).toBeInTheDocument();
+    expect(screen.queryByText("Current work", { selector: ".agent-queue-message" })).not.toBeInTheDocument();
+
+    emitAgentEvent?.({ type: "turn-started", botId: "chief", threadId: "thread-chief", turnId: "turn-live" });
+    emitAgentEvent?.({
+      type: "queue-changed",
+      snapshot: {
+        botId: "chief",
+        deliveries: [
+          { ...firstStarting, status: "running", turnId: "turn-live" },
+          { ...second, status: "starting", position: null, turnId: "turn-live" },
+          third,
+        ],
+      },
+    });
+    await waitFor(() =>
+      expect(Array.from(document.querySelectorAll(".agent-queue-message"), (element) => element.textContent)).toEqual([
+        "Later work",
+        "Next work",
+      ]),
+    );
+
+    emitAgentEvent?.({
+      type: "turn-completed",
+      botId: "chief",
+      threadId: "thread-chief",
+      turnId: "turn-live",
+      status: "completed",
+    });
+    emitAgentEvent?.({
+      type: "queue-changed",
+      snapshot: {
+        botId: "chief",
+        deliveries: [
+          { ...second, position: 1, turnId: null },
+          { ...third, position: 2 },
+        ],
+      },
+    });
+    await waitFor(() => expect(document.querySelector(".agent-queue-panel")).not.toBeInTheDocument());
+
+    const secondStarting = { ...second, status: "starting" as const, position: null, turnId: "turn-next" };
+    emitAgentEvent?.({
+      type: "queue-changed",
+      snapshot: { botId: "chief", deliveries: [secondStarting, third] },
+    });
+    expect(await screen.findByText("Later work", { selector: ".agent-queue-message" })).toBeInTheDocument();
+    expect(screen.queryByText("Next work", { selector: ".agent-queue-message" })).not.toBeInTheDocument();
+  });
+
+  it("keeps the complete Bot draft when creation fails", async () => {
+    vi.mocked(window.lunabot.agent.createBot).mockRejectedValueOnce(
+      new Error("The first message could not be queued."),
+    );
+    render(() => <App />);
+    await screen.findByRole("heading", { name: "Chief" });
+    await fireEvent.click(screen.getByRole("button", { name: "Create new Bot" }));
+    await fireEvent.click(await screen.findByRole("button", { name: /^Draft Editor\./ }));
+    const name = screen.getByRole("textbox", { name: "Name" });
+    const purpose = screen.getByRole("textbox", { name: "What should this Bot help with?" });
+    await fireEvent.input(name, { target: { value: "My Draft Editor" } });
+    await fireEvent.click(screen.getByRole("button", { name: "Create Bot" }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("The first message could not be queued.");
+    expect(name).toHaveValue("My Draft Editor");
+    expect(purpose).toHaveValue(
+      "Edit the texts I send you: fix errors, cut what is unnecessary, make sentences more direct and keep my own voice. Show what changed and why.",
+    );
+    expect(screen.getByRole("heading", { name: "Create a Bot your way" })).toBeInTheDocument();
+  });
+
+  it("answers model prompts from a separate card while composer remains a queue", async () => {
+    render(() => <App />);
+    await screen.findByRole("heading", { name: "Chief" });
+    await confirmOnboardingModel();
+    emitAgentEvent?.({
+      type: "prompt",
+      requestId: "prompt-1",
+      botId: "chief",
+      threadId: "thread-1",
+      turnId: "turn-1",
+      questions: [
+        {
+          id: "account",
+          header: "Account",
+          question: "Which account?",
+          isSecret: false,
+          options: null,
+        },
+      ],
+    });
+    const answer = await screen.findByRole("textbox", {
+      name: "Write your own answer to Which account?",
+    });
+    await fireEvent.input(answer, { target: { value: "Acme" } });
+    await fireEvent.keyDown(answer, { key: "Enter" });
+    await waitFor(() =>
+      expect(window.lunabot.agent.respondToPrompt).toHaveBeenCalledWith({
+        requestId: "prompt-1",
+        answers: { account: ["Acme"] },
+      }),
+    );
+    emitAgentEvent?.({
+      type: "conversation",
+      snapshot: {
+        botId: "chief",
+        threadId: "thread-1",
+        activeTurnId: "turn-1",
+        revision: 20,
+        messages: [
+          {
+            id: "question-prompt:turn-1:prompt-1",
+            turnId: "turn-1",
+            author: "assistant",
+            source: "assistant",
+            text: "",
+            createdAt: "2026-08-28T12:00:00.000Z",
+            status: "completed",
+            itemType: "question_prompt",
+            questionPrompt: {
+              requestId: "prompt-1",
+              questions: [
+                {
+                  id: "account",
+                  header: "Account",
+                  question: "Which account?",
+                  isSecret: false,
+                  options: null,
+                },
+              ],
+              resolution: {
+                status: "answered",
+                responses: { account: { status: "answered", answers: ["Acme"] } },
+              },
+            },
+          },
+        ],
+      },
+    });
+    await waitFor(() => expect(screen.getByRole("region", { name: "Answers sent" })).toBeVisible());
+    expect(screen.queryByRole("textbox", { name: "Write your own answer to Which account?" })).not.toBeInTheDocument();
+  });
+
+  it("keeps the prompt active and reports a delivery failure", async () => {
+    vi.mocked(window.lunabot.agent.respondToPrompt).mockRejectedValueOnce(new Error("Provider is offline."));
+    render(() => <App />);
+    await screen.findByRole("heading", { name: "Chief" });
+    await confirmOnboardingModel();
+    emitAgentEvent?.({
+      type: "prompt",
+      requestId: "prompt-failure",
+      botId: "chief",
+      threadId: "thread-1",
+      turnId: "turn-failure",
+      questions: [
+        {
+          id: "account",
+          header: "Account",
+          question: "Which account?",
+          isSecret: false,
+          options: null,
+        },
+      ],
+    });
+
+    const answer = await screen.findByRole("textbox", { name: "Write your own answer to Which account?" });
+    await fireEvent.input(answer, { target: { value: "Acme" } });
+    await fireEvent.keyDown(answer, { key: "Enter" });
+
+    expect(await screen.findByText("Provider is offline.")).toBeVisible();
+    expect(screen.getByText("Answer failed")).toBeVisible();
+    expect(answer).toBeEnabled();
+  });
+
+  it("replaces an active prompt when its resolution arrives from another client", async () => {
+    render(() => <App />);
+    await screen.findByRole("heading", { name: "Chief" });
+    await confirmOnboardingModel();
+    emitAgentEvent?.({
+      type: "prompt",
+      requestId: "prompt-external",
+      botId: "chief",
+      threadId: "thread-1",
+      turnId: "turn-external",
+      questions: [
+        {
+          id: "account",
+          header: "Account",
+          question: "Which external account?",
+          isSecret: false,
+          options: null,
+        },
+      ],
+    });
+    expect(
+      await screen.findByRole("textbox", { name: "Write your own answer to Which external account?" }),
+    ).toBeVisible();
+
+    emitAgentEvent?.({
+      type: "conversation",
+      snapshot: {
+        botId: "chief",
+        threadId: "thread-1",
+        activeTurnId: "turn-external",
+        revision: 20,
+        messages: [
+          {
+            id: "question-prompt:turn-external:prompt-external",
+            turnId: "turn-external",
+            author: "assistant",
+            source: "assistant",
+            text: "Question: Which external account?\nAnswer: External",
+            createdAt: "2026-08-28T12:00:00.000Z",
+            status: "completed",
+            itemType: "question_prompt",
+            questionPrompt: {
+              requestId: "prompt-external",
+              questions: [
+                {
+                  id: "account",
+                  header: "Account",
+                  question: "Which external account?",
+                  isSecret: false,
+                  options: null,
+                },
+              ],
+              resolution: {
+                status: "answered",
+                responses: { account: { status: "answered", answers: ["External"] } },
+              },
+            },
+          },
+        ],
+      },
+    });
+
+    await waitFor(() => expect(screen.getByRole("region", { name: "Answers sent" })).toBeVisible());
+    expect(
+      screen.queryByRole("textbox", { name: "Write your own answer to Which external account?" }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("hides an unresolved history record and mounts a rapid follow-up prompt", async () => {
+    render(() => <App />);
+    await screen.findByRole("heading", { name: "Chief" });
+    await confirmOnboardingModel();
+    emitAgentEvent?.({
+      type: "conversation",
+      snapshot: {
+        botId: "chief",
+        threadId: "thread-1",
+        activeTurnId: "turn-first",
+        revision: 20,
+        messages: [
+          {
+            id: "question-prompt:turn-first:prompt-first",
+            turnId: "turn-first",
+            author: "assistant",
+            source: "assistant",
+            text: "Question: First question?",
+            createdAt: "2026-08-28T12:00:00.000Z",
+            status: "completed",
+            itemType: "question_prompt",
+            questionPrompt: {
+              requestId: "prompt-first",
+              questions: [
+                {
+                  id: "first",
+                  header: "First",
+                  question: "First question?",
+                  isSecret: false,
+                  options: null,
+                },
+              ],
+              resolution: null,
+            },
+          },
+        ],
+      },
+    });
+    expect(screen.queryByRole("region", { name: "Questions expired" })).not.toBeInTheDocument();
+
+    emitAgentEvent?.({
+      type: "prompt",
+      requestId: "prompt-first",
+      botId: "chief",
+      threadId: "thread-1",
+      turnId: "turn-first",
+      questions: [
+        {
+          id: "first",
+          header: "First",
+          question: "First question?",
+          isSecret: false,
+          options: null,
+        },
+      ],
+    });
+    const firstAnswer = await screen.findByRole("textbox", { name: "Write your own answer to First question?" });
+    await fireEvent.input(firstAnswer, { target: { value: "First answer" } });
+    await fireEvent.keyDown(firstAnswer, { key: "Enter" });
+    await screen.findByRole("region", { name: "Answers sent" });
+
+    emitAgentEvent?.({
+      type: "conversation",
+      snapshot: {
+        botId: "chief",
+        threadId: "thread-1",
+        activeTurnId: "turn-first",
+        revision: 21,
+        messages: [
+          {
+            id: "question-prompt:turn-first:prompt-first",
+            turnId: "turn-first",
+            author: "assistant",
+            source: "assistant",
+            text: "Question: First question?\nAnswer: First answer",
+            createdAt: "2026-08-28T12:00:00.000Z",
+            status: "completed",
+            itemType: "question_prompt",
+            questionPrompt: {
+              requestId: "prompt-first",
+              questions: [
+                {
+                  id: "first",
+                  header: "First",
+                  question: "First question?",
+                  isSecret: false,
+                  options: null,
+                },
+              ],
+              resolution: {
+                status: "answered",
+                responses: { first: { status: "answered", answers: ["First answer"] } },
+              },
+            },
+          },
+        ],
+      },
+    });
+
+    emitAgentEvent?.({
+      type: "prompt",
+      requestId: "prompt-second",
+      botId: "chief",
+      threadId: "thread-1",
+      turnId: "turn-second",
+      questions: [
+        {
+          id: "second",
+          header: "Second",
+          question: "Second question?",
+          isSecret: false,
+          options: null,
+        },
+      ],
+    });
+
+    expect(await screen.findByRole("textbox", { name: "Write your own answer to Second question?" })).toBeVisible();
+    expect(screen.queryByRole("region", { name: "Answers sent" })).not.toBeInTheDocument();
+  });
+
+  it("keeps an older resolved prompt when a new turn reuses its request ID", async () => {
+    render(() => <App />);
+    await screen.findByRole("heading", { name: "Chief" });
+    await confirmOnboardingModel();
+    emitAgentEvent?.({
+      type: "conversation",
+      snapshot: {
+        botId: "chief",
+        threadId: "thread-1",
+        activeTurnId: null,
+        revision: 20,
+        messages: [
+          {
+            id: "question-prompt:turn-old:prompt-reused",
+            turnId: "turn-old",
+            author: "assistant",
+            source: "assistant",
+            text: "Question: Which account?\nAnswer: Acme",
+            createdAt: "2026-08-28T12:00:00.000Z",
+            status: "completed",
+            itemType: "question_prompt",
+            questionPrompt: {
+              requestId: "prompt-reused",
+              questions: [
+                {
+                  id: "account",
+                  header: "Account",
+                  question: "Which account?",
+                  isSecret: false,
+                  options: null,
+                },
+              ],
+              resolution: {
+                status: "answered",
+                responses: { account: { status: "answered", answers: ["Acme"] } },
+              },
+            },
+          },
+        ],
+      },
+    });
+    expect(await screen.findByRole("region", { name: "Answers sent" })).toBeVisible();
+
+    emitAgentEvent?.({
+      type: "prompt",
+      requestId: "prompt-reused",
+      botId: "chief",
+      threadId: "thread-1",
+      turnId: "turn-new",
+      questions: [
+        {
+          id: "goal",
+          header: "Goal",
+          question: "What should I do next?",
+          isSecret: false,
+          options: null,
+        },
+      ],
+    });
+
+    expect(
+      await screen.findByRole("textbox", { name: "Write your own answer to What should I do next?" }),
+    ).toBeVisible();
+    expect(screen.getByRole("region", { name: "Answers sent" })).toBeVisible();
+  });
+
+  it("renders command approvals and keeps the action pending while submitting", async () => {
+    let resolveApproval: (() => void) | undefined;
+    vi.mocked(window.lunabot.agent.respondToApproval).mockImplementation(
+      () =>
+        new Promise<void>((resolve) => {
+          resolveApproval = resolve;
+        }),
+    );
+    render(() => <App />);
+    await screen.findByRole("heading", { name: "Chief" });
+    await confirmOnboardingModel();
+    emitAgentEvent?.({
+      type: "approval",
+      approval: {
+        requestId: "approval-1",
+        botId: "chief",
+        threadId: "thread-1",
+        turnId: "turn-1",
+        kind: "command",
+        command: "npm test -- --runInBand",
+        cwd: "/Users/example/projects/lunabot",
+        reason: "Run the verification suite.",
+        grantRoot: null,
+        permissions: null,
+      },
+    });
+
+    expect(await screen.findByText("Run this command?")).toBeInTheDocument();
+    expect(screen.getByText("npm test -- --runInBand")).toBeInTheDocument();
+    expect(screen.getByText("Run the verification suite.")).toBeInTheDocument();
+    await fireEvent.click(screen.getByRole("button", { name: "Approve" }));
+    expect(screen.getByRole("button", { name: "Sending…" })).toBeDisabled();
+    expect(window.lunabot.agent.respondToApproval).toHaveBeenCalledWith({
+      requestId: "approval-1",
+      decision: "accept",
+    });
+
+    resolveApproval?.();
+    await waitFor(() => expect(screen.queryByText("Run this command?")).not.toBeInTheDocument());
+  });
+
+  it("removes a completed Dynamic Island answer without sending it twice", async () => {
+    render(() => <App />);
+    await screen.findByRole("heading", { name: "Chief" });
+    await confirmOnboardingModel();
+    await waitFor(() => expect(emitDynamicIslandAction).toBeDefined());
+    emitAgentEvent?.({
+      type: "prompt",
+      requestId: "prompt-island",
+      botId: "chief",
+      threadId: "thread-1",
+      turnId: "turn-1",
+      questions: [
+        {
+          id: "source",
+          header: "Choose a source",
+          question: "Which source should I use?",
+          isSecret: false,
+          options: [
+            { label: "Official data", description: "Use the public dataset" },
+            { label: "Industry report", description: "Use the detailed report" },
+          ],
+        },
+      ],
+    });
+    await screen.findByText("Which source should I use?");
+
+    emitDynamicIslandAction?.({
+      type: "answer-prompt",
+      botId: "chief",
+      requestId: "prompt-island",
+      answers: { source: ["Official data"] },
+    });
+
+    await Promise.resolve();
+
+    expect(window.lunabot.agent.respondToPrompt).not.toHaveBeenCalled();
+    expect(screen.queryByText("Which source should I use?")).not.toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Chief" })).toBeVisible();
+  });
+
+  it("keeps a Dynamic Island failure until acknowledgement succeeds", async () => {
+    vi.mocked(window.lunabot.agent.acknowledgeFailedTurn).mockRejectedValueOnce(
+      new Error("Acknowledgement unavailable"),
+    );
+    render(() => <App />);
+    await screen.findByRole("heading", { name: "Chief" });
+    await confirmOnboardingModel();
+    await waitFor(() => expect(emitDynamicIslandAction).toBeDefined());
+    emitAgentEvent?.({
+      type: "turn-completed",
+      botId: "chief",
+      threadId: "thread-1",
+      turnId: "turn-failed",
+      status: "failed",
+    });
+    const action = {
+      type: "open-failure",
+      botId: "chief",
+      turnId: "turn-failed",
+    } as const;
+    emitDynamicIslandAction?.(action);
+
+    expect(await screen.findByText("Acknowledgement unavailable")).toBeInTheDocument();
+    expect(vi.mocked(window.lunabot.dynamicIsland.publishPresentation).mock.calls.at(-1)?.[0]).toMatchObject({
+      mode: "failed",
+    });
+    emitDynamicIslandAction?.(action);
+    await waitFor(() => expect(window.lunabot.agent.acknowledgeFailedTurn).toHaveBeenCalledTimes(2));
+    await waitFor(() =>
+      expect(vi.mocked(window.lunabot.dynamicIsland.publishPresentation).mock.calls.at(-1)?.[0]).toMatchObject({
+        mode: "idle",
+      }),
+    );
+  });
+
+  it("marks the selected Dynamic Island message as read after opening it", async () => {
+    vi.mocked(window.lunabot.agent.readConversation).mockResolvedValue({
+      botId: "chief",
+      threadId: "thread-1",
+      activeTurnId: null,
+      revision: 1,
+      messages: [
+        {
+          id: "reply-island",
+          author: "assistant",
+          text: "The result is ready.",
+          createdAt: "2026-08-29T10:42:00.000Z",
+          status: "completed",
+        },
+      ],
+      readState: { unreadCount: 1, firstUnreadMessageId: "reply-island", throughMessageId: null },
+    });
+    render(() => <App />);
+    await screen.findByRole("heading", { name: "Chief" });
+    await confirmOnboardingModel();
+    await waitFor(() => expect(emitDynamicIslandAction).toBeDefined());
+
+    emitDynamicIslandAction?.({
+      type: "open-message",
+      botId: "chief",
+      messageId: "reply-island",
+    });
+
+    await waitFor(() =>
+      expect(window.lunabot.agent.markConversationRead).toHaveBeenCalledWith({
+        botId: "chief",
+        throughMessageId: "reply-island",
+      }),
+    );
+    await waitFor(() =>
+      expect(vi.mocked(window.lunabot.dynamicIsland.publishPresentation).mock.calls.at(-1)?.[0]).toMatchObject({
+        mode: "idle",
+      }),
+    );
+  });
+
+  it("merges a refreshed conversation page without dropping loaded messages", async () => {
+    const message = (id: string, text: string) => ({
+      id,
+      author: "assistant" as const,
+      text,
+      createdAt: "2026-08-30T02:00:00.000Z",
+      status: "completed" as const,
+    });
+    vi.mocked(window.lunabot.agent.readConversationPage).mockResolvedValue(
+      testConversationPage("chief", [message("reply-old", "Loaded earlier")], {
+        pageInfo: { hasOlder: true, olderCursor: "older" },
+      }),
+    );
+    render(() => <App />);
+    expect(await screen.findByText("Loaded earlier")).toBeInTheDocument();
+
+    emitAgentEvent?.({
+      type: "conversation-page",
+      page: testConversationPage("chief", [message("reply-new", "Fresh remote reply")], {
+        revision: 2,
+        pageInfo: { hasOlder: true, olderCursor: "older" },
+      }),
+    });
+
+    expect(await screen.findByText("Fresh remote reply")).toBeInTheDocument();
+    expect(screen.getByText("Loaded earlier")).toBeInTheDocument();
+  });
+
+  it("keeps the current read state when an older page returns stale read data", async () => {
+    const latestMessage = {
+      id: "reply-latest-page",
+      author: "assistant" as const,
+      text: "Latest reply",
+      createdAt: "2026-08-30T02:02:00.000Z",
+      status: "completed" as const,
+    };
+    const latestPage = testConversationPage("chief", [latestMessage], {
+      readState: { unreadCount: 0, firstUnreadMessageId: null, throughMessageId: null },
+      pageInfo: { hasOlder: true, olderCursor: "older" },
+    });
+    let resolveOlderPage: ((page: ConversationPage) => void) | undefined;
+    vi.mocked(window.lunabot.agent.readConversationPage).mockImplementation(async (input) => {
+      if (input.anchor?.type !== "before") return latestPage;
+      return await new Promise((resolve) => {
+        resolveOlderPage = resolve;
+      });
+    });
+
+    function Harness() {
+      const controller = createAppController({});
+      return (
+        <AppControllerProvider controller={controller}>
+          <button type="button" onClick={() => void controller.loadOlderAgentMessages("chief")}>
+            Load older agent messages
+          </button>
+          <output data-testid="agent-read-state">
+            {controller.conversationReads().chief?.unreadCount ?? -1}|
+            {controller
+              .activeMessages()
+              .map((message) => message.id)
+              .join(",")}
+          </output>
+        </AppControllerProvider>
+      );
+    }
+
+    render(() => <Harness />);
+    await waitFor(() => expect(screen.getByTestId("agent-read-state")).toHaveTextContent("0|reply-latest-page"));
+    await fireEvent.click(screen.getByRole("button", { name: "Load older agent messages" }));
+    await waitFor(() => expect(resolveOlderPage).toBeDefined());
+
+    emitAgentEvent?.({
+      type: "conversation-page",
+      page: testConversationPage("chief", [latestMessage], {
+        revision: 2,
+        readState: { unreadCount: 1, firstUnreadMessageId: latestMessage.id, throughMessageId: null },
+        pageInfo: { hasOlder: true, olderCursor: "older" },
+      }),
+    });
+    await waitFor(() => expect(window.lunabot.agent.markConversationRead).toHaveBeenCalledOnce());
+    await waitFor(() => expect(screen.getByTestId("agent-read-state")).toHaveTextContent("0|reply-latest-page"));
+
+    resolveOlderPage?.(
+      testConversationPage(
+        "chief",
+        [
+          {
+            id: "reply-older-page",
+            author: "assistant",
+            text: "Older reply",
+            createdAt: "2026-08-30T02:01:00.000Z",
+            status: "completed",
+          },
+        ],
+        {
+          revision: 2,
+          readState: { unreadCount: 1, firstUnreadMessageId: latestMessage.id, throughMessageId: null },
+        },
+      ),
+    );
+
+    await waitFor(() =>
+      expect(screen.getByTestId("agent-read-state")).toHaveTextContent("0|reply-older-page,reply-latest-page"),
+    );
+  });
+
+  it("keeps a refreshed conversation page read while its agent chat is open", async () => {
+    render(() => <App />);
+    await screen.findByRole("heading", { name: "Chief" });
+
+    emitAgentEvent?.({
+      type: "conversation-page",
+      page: testConversationPage(
+        "chief",
+        [
+          {
+            id: "reply-visible",
+            author: "assistant",
+            text: "Visible remote reply",
+            createdAt: "2026-08-30T02:01:00.000Z",
+            status: "completed",
+          },
+        ],
+        {
+          revision: 2,
+          readState: { unreadCount: 1, firstUnreadMessageId: "reply-visible", throughMessageId: null },
+        },
+      ),
+    });
+
+    expect(await screen.findByText("Visible remote reply")).toBeInTheDocument();
+    await waitFor(() =>
+      expect(window.lunabot.agent.markConversationRead).toHaveBeenCalledWith({
+        botId: "chief",
+        throughMessageId: "reply-visible",
+      }),
+    );
+    expect(screen.queryByRole("status", { name: "1 new message" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("separator", { name: "New messages" })).not.toBeInTheDocument();
+  });
+
+  it("does not mark an attachment-only conversation refresh as unread", async () => {
+    render(() => <App />);
+    await screen.findByRole("heading", { name: "Chief" });
+
+    emitAgentEvent?.({
+      type: "conversation-page",
+      page: testConversationPage(
+        "chief",
+        [
+          {
+            id: "reply-attachment-only",
+            author: "assistant",
+            text: "",
+            createdAt: "2026-08-30T02:02:00.000Z",
+            status: "completed",
+            itemType: "agent_attachment",
+          },
+        ],
+        {
+          revision: 2,
+          readState: { unreadCount: 0, firstUnreadMessageId: null, throughMessageId: null },
+        },
+      ),
+    });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(window.lunabot.agent.markConversationRead).not.toHaveBeenCalled();
+    expect(screen.queryByRole("status", { name: /new messages?/ })).not.toBeInTheDocument();
+  });
+
+  it("does not persist a redundant read for an already-read refreshed page", async () => {
+    render(() => <App />);
+    await screen.findByRole("heading", { name: "Chief" });
+
+    emitAgentEvent?.({
+      type: "conversation-page",
+      page: testConversationPage(
+        "chief",
+        [
+          {
+            id: "reply-already-read",
+            author: "assistant",
+            text: "Historical visible reply",
+            createdAt: "2026-08-30T02:02:00.000Z",
+            status: "completed",
+          },
+        ],
+        {
+          revision: 2,
+          readState: { unreadCount: 0, firstUnreadMessageId: null, throughMessageId: "reply-already-read" },
+        },
+      ),
+    });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(window.lunabot.agent.markConversationRead).not.toHaveBeenCalled();
+    expect(screen.queryByRole("status", { name: /new messages?/ })).not.toBeInTheDocument();
+  });
+
+  it("keeps a successful read when an equal-revision unread page arrives later", async () => {
+    render(() => <App />);
+    await screen.findByRole("heading", { name: "Chief" });
+    const delayedPage = testConversationPage(
+      "chief",
+      [
+        {
+          id: "reply-delayed-read-state",
+          author: "assistant",
+          text: "Reply from the delayed page",
+          createdAt: "2026-08-30T02:02:00.000Z",
+          status: "completed",
+        },
+      ],
+      {
+        revision: 2,
+        readState: { unreadCount: 1, firstUnreadMessageId: "reply-delayed-read-state", throughMessageId: null },
+      },
+    );
+
+    emitAgentEvent?.({ type: "conversation-page", page: delayedPage });
+    await waitFor(() => expect(window.lunabot.agent.markConversationRead).toHaveBeenCalledOnce());
+    await waitFor(() => expect(screen.queryByRole("status", { name: "1 new message" })).not.toBeInTheDocument());
+
+    emitAgentEvent?.({ type: "conversation-page", page: delayedPage });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(vi.mocked(window.lunabot.agent.markConversationRead).mock.calls).toEqual([
+      [{ botId: "chief", throughMessageId: "reply-delayed-read-state" }],
+    ]);
+    expect(screen.queryByRole("status", { name: "1 new message" })).not.toBeInTheDocument();
+  });
+
+  it("keeps a successful realtime read when a pending reload resolves later", async () => {
+    let resolveInitialPage: ((page: ConversationPage) => void) | undefined;
+    vi.mocked(window.lunabot.agent.listConversationReads).mockResolvedValueOnce({
+      chief: { unreadCount: 0, firstUnreadMessageId: null, throughMessageId: null },
+    });
+    vi.mocked(window.lunabot.agent.readConversationPage).mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolveInitialPage = resolve;
+        }),
+    );
+    render(() => <App />);
+    await screen.findByRole("heading", { name: "Chief" });
+    await waitFor(() => expect(resolveInitialPage).toBeDefined());
+    const unreadPage = testConversationPage(
+      "chief",
+      [
+        {
+          id: "reply-reload-race",
+          author: "assistant",
+          text: "Reply before the reload resolves",
+          createdAt: "2026-08-30T02:02:00.000Z",
+          status: "completed",
+        },
+      ],
+      {
+        revision: 2,
+        readState: { unreadCount: 1, firstUnreadMessageId: "reply-reload-race", throughMessageId: null },
+      },
+    );
+
+    emitAgentEvent?.({ type: "conversation-page", page: unreadPage });
+    await waitFor(() => expect(window.lunabot.agent.markConversationRead).toHaveBeenCalledOnce());
+    await waitFor(() => expect(screen.queryByRole("status", { name: "1 new message" })).not.toBeInTheDocument());
+
+    resolveInitialPage?.(unreadPage);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(screen.queryByRole("status", { name: "1 new message" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("separator", { name: "New messages" })).not.toBeInTheDocument();
+  });
+
+  it("keeps a duplicate refreshed page read while persistence is pending", async () => {
+    let resolveRead: ((state: NonNullable<ConversationPage["readState"]>) => void) | undefined;
+    vi.mocked(window.lunabot.agent.listConversationReads).mockResolvedValueOnce({
+      chief: { unreadCount: 0, firstUnreadMessageId: null, throughMessageId: null },
+    });
+    vi.mocked(window.lunabot.agent.markConversationRead).mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolveRead = resolve;
+        }),
+    );
+    render(() => <App />);
+    await screen.findByRole("heading", { name: "Chief" });
+    const duplicatePage = testConversationPage(
+      "chief",
+      [
+        {
+          id: "reply-pending-read",
+          author: "assistant",
+          text: "Reply with a pending read",
+          createdAt: "2026-08-30T02:02:00.000Z",
+          status: "completed",
+        },
+      ],
+      {
+        revision: 2,
+        readState: { unreadCount: 1, firstUnreadMessageId: "reply-pending-read", throughMessageId: null },
+      },
+    );
+
+    emitAgentEvent?.({ type: "conversation-page", page: duplicatePage });
+    await waitFor(() => expect(window.lunabot.agent.markConversationRead).toHaveBeenCalledOnce());
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(screen.queryByRole("status", { name: "1 new message" })).not.toBeInTheDocument();
+
+    emitAgentEvent?.({ type: "conversation-page", page: duplicatePage });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(window.lunabot.agent.markConversationRead).toHaveBeenCalledOnce();
+    expect(screen.queryByRole("status", { name: "1 new message" })).not.toBeInTheDocument();
+
+    resolveRead?.({ unreadCount: 0, firstUnreadMessageId: null, throughMessageId: "reply-pending-read" });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  });
+
+  it("restores a newer unread reply when its queued read fails", async () => {
+    let resolveFirstRead: ((state: NonNullable<ConversationPage["readState"]>) => void) | undefined;
+    let rejectSecondRead: ((error: Error) => void) | undefined;
+    vi.mocked(window.lunabot.agent.listConversationReads).mockResolvedValueOnce({
+      chief: { unreadCount: 0, firstUnreadMessageId: null, throughMessageId: null },
+    });
+    vi.mocked(window.lunabot.agent.markConversationRead)
+      .mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            resolveFirstRead = resolve;
+          }),
+      )
+      .mockImplementationOnce(
+        () =>
+          new Promise((_, reject) => {
+            rejectSecondRead = reject;
+          }),
+      );
+    render(() => <App />);
+    await screen.findByRole("heading", { name: "Chief" });
+
+    emitAgentEvent?.({
+      type: "conversation-page",
+      page: testConversationPage(
+        "chief",
+        [
+          {
+            id: "reply-read-a",
+            author: "assistant",
+            text: "First queued reply",
+            createdAt: "2026-08-30T02:02:00.000Z",
+            status: "completed",
+          },
+        ],
+        {
+          revision: 2,
+          readState: { unreadCount: 1, firstUnreadMessageId: "reply-read-a", throughMessageId: null },
+        },
+      ),
+    });
+    await waitFor(() => expect(window.lunabot.agent.markConversationRead).toHaveBeenCalledOnce());
+
+    emitAgentEvent?.({
+      type: "conversation-page",
+      page: testConversationPage(
+        "chief",
+        [
+          {
+            id: "reply-read-a",
+            author: "assistant",
+            text: "First queued reply",
+            createdAt: "2026-08-30T02:02:00.000Z",
+            status: "completed",
+          },
+          {
+            id: "reply-read-b",
+            author: "assistant",
+            text: "Newer queued reply",
+            createdAt: "2026-08-30T02:03:00.000Z",
+            status: "completed",
+          },
+        ],
+        {
+          revision: 3,
+          readState: { unreadCount: 2, firstUnreadMessageId: "reply-read-a", throughMessageId: null },
+        },
+      ),
+    });
+    await screen.findByText("Newer queued reply");
+    expect(window.lunabot.agent.markConversationRead).toHaveBeenCalledOnce();
+
+    resolveFirstRead?.({ unreadCount: 0, firstUnreadMessageId: null, throughMessageId: "reply-read-a" });
+    await waitFor(() => expect(window.lunabot.agent.markConversationRead).toHaveBeenCalledTimes(2));
+    vi.mocked(window.lunabot.agent.readConversationPage).mockResolvedValueOnce(
+      testConversationPage(
+        "chief",
+        [
+          {
+            id: "reply-read-b",
+            author: "assistant",
+            text: "Newer queued reply",
+            createdAt: "2026-08-30T02:03:00.000Z",
+            status: "completed",
+          },
+        ],
+        {
+          revision: 3,
+          readState: { unreadCount: 1, firstUnreadMessageId: "reply-read-b", throughMessageId: "reply-read-a" },
+        },
+      ),
+    );
+    rejectSecondRead?.(new Error("Newer read unavailable"));
+
+    expect(await screen.findByText("Newer read unavailable")).toBeInTheDocument();
+    expect(await screen.findByRole("status", { name: "1 new message" })).toBeInTheDocument();
+  });
+
+  it("retries an automatic read for the same message after persistence fails", async () => {
+    vi.mocked(window.lunabot.agent.markConversationRead).mockRejectedValueOnce(new Error("Read unavailable"));
+    render(() => <App />);
+    await screen.findByRole("heading", { name: "Chief" });
+    const page = testConversationPage(
+      "chief",
+      [
+        {
+          id: "reply-read-retry",
+          author: "assistant",
+          text: "Visible reply that needs a retry",
+          createdAt: "2026-08-30T02:02:00.000Z",
+          status: "completed",
+        },
+      ],
+      {
+        revision: 2,
+        readState: { unreadCount: 1, firstUnreadMessageId: "reply-read-retry", throughMessageId: null },
+      },
+    );
+    vi.mocked(window.lunabot.agent.readConversationPage).mockResolvedValueOnce(page);
+
+    emitAgentEvent?.({ type: "conversation-page", page });
+    expect(await screen.findByText("Read unavailable")).toBeInTheDocument();
+    expect(await screen.findByRole("status", { name: "1 new message" })).toBeInTheDocument();
+
+    emitAgentEvent?.({ type: "conversation-page", page });
+    await waitFor(() =>
+      expect(window.lunabot.agent.markConversationRead).toHaveBeenNthCalledWith(2, {
+        botId: "chief",
+        throughMessageId: "reply-read-retry",
+      }),
+    );
+    await waitFor(() => expect(screen.queryByRole("status", { name: "1 new message" })).not.toBeInTheDocument());
+  });
+
+  it("does not mark an older boundary from a rejected conversation page", async () => {
+    let resolveInitialPage: ((page: ConversationPage) => void) | undefined;
+    vi.mocked(window.lunabot.agent.readConversationPage).mockImplementation(
+      async (): Promise<ConversationPage> =>
+        await new Promise((resolve) => {
+          resolveInitialPage = resolve;
+        }),
+    );
+    render(() => <App />);
+    await screen.findByRole("heading", { name: "Chief" });
+
+    emitAgentEvent?.({
+      type: "conversation-page",
+      page: testConversationPage(
+        "chief",
+        [
+          {
+            id: "reply-newer-boundary",
+            author: "assistant",
+            text: "Newest visible reply",
+            createdAt: "2026-08-30T02:02:00.000Z",
+            status: "completed",
+          },
+        ],
+        {
+          revision: 2,
+          readState: { unreadCount: 1, firstUnreadMessageId: "reply-newer-boundary", throughMessageId: null },
+        },
+      ),
+    });
+    await waitFor(() =>
+      expect(window.lunabot.agent.markConversationRead).toHaveBeenCalledWith({
+        botId: "chief",
+        throughMessageId: "reply-newer-boundary",
+      }),
+    );
+
+    resolveInitialPage?.(
+      testConversationPage(
+        "chief",
+        [
+          {
+            id: "reply-older-boundary",
+            author: "assistant",
+            text: "Older reply",
+            createdAt: "2026-08-30T02:01:00.000Z",
+            status: "completed",
+          },
+        ],
+        {
+          revision: 1,
+          readState: { unreadCount: 1, firstUnreadMessageId: "reply-older-boundary", throughMessageId: null },
+        },
+      ),
+    );
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(window.lunabot.agent.markConversationRead).not.toHaveBeenCalledWith({
+      botId: "chief",
+      throughMessageId: "reply-older-boundary",
+    });
+    expect(screen.getByText("Newest visible reply")).toBeInTheDocument();
+  });
+
+  it("retries an explicit chat-open reload when its page revision is stale", async () => {
+    const unreadState = {
+      unreadCount: 1,
+      firstUnreadMessageId: "reply-current-revision",
+      throughMessageId: null,
+    };
+    const currentPage = testConversationPage(
+      "chief",
+      [
+        {
+          id: "reply-current-revision",
+          author: "assistant",
+          text: "Current revision reply",
+          createdAt: "2026-08-30T02:03:00.000Z",
+          status: "completed",
+        },
+      ],
+      { revision: 2, readState: unreadState },
+    );
+    vi.mocked(window.lunabot.agent.listConversationReads).mockResolvedValueOnce({ chief: unreadState });
+    vi.mocked(window.lunabot.agent.readConversation).mockResolvedValue({
+      botId: "chief",
+      threadId: currentPage.threadId,
+      activeTurnId: null,
+      revision: currentPage.revision,
+      readState: unreadState,
+      messages: currentPage.messages,
+    });
+    render(() => <App />);
+    expect(await screen.findByRole("status", { name: "1 new message" })).toBeInTheDocument();
+
+    vi.mocked(window.lunabot.agent.readConversationPage)
+      .mockResolvedValueOnce(
+        testConversationPage(
+          "chief",
+          [
+            {
+              id: "reply-stale-revision",
+              author: "assistant",
+              text: "Stale revision reply",
+              createdAt: "2026-08-30T02:02:00.000Z",
+              status: "completed",
+            },
+          ],
+          {
+            revision: 1,
+            readState: { unreadCount: 1, firstUnreadMessageId: "reply-stale-revision", throughMessageId: null },
+          },
+        ),
+      )
+      .mockResolvedValueOnce(currentPage);
+    await fireEvent.click(screen.getByRole("button", { name: /Chief/ }));
+
+    await waitFor(() =>
+      expect(window.lunabot.agent.markConversationRead).toHaveBeenCalledWith({
+        botId: "chief",
+        throughMessageId: "reply-current-revision",
+      }),
+    );
+    expect(window.lunabot.agent.markConversationRead).not.toHaveBeenCalledWith({
+      botId: "chief",
+      throughMessageId: "reply-stale-revision",
+    });
+    await waitFor(() => expect(screen.queryByRole("status", { name: "1 new message" })).not.toBeInTheDocument());
+  });
+
+  it("uses the latest visible reply after one stale retry without reloading the queue", async () => {
+    render(() => <App />);
+    await screen.findByRole("heading", { name: "Chief" });
+    emitAgentEvent?.({
+      type: "conversation-page",
+      page: testConversationPage(
+        "chief",
+        [
+          {
+            id: "reply-applied-revision",
+            author: "assistant",
+            text: "Applied revision reply",
+            createdAt: "2026-08-30T02:03:00.000Z",
+            status: "completed",
+          },
+        ],
+        {
+          revision: 2,
+          readState: { unreadCount: 0, firstUnreadMessageId: null, throughMessageId: "reply-applied-revision" },
+        },
+      ),
+    });
+    await screen.findByText("Applied revision reply");
+    const stalePage = testConversationPage("chief", [], {
+      revision: 1,
+      readState: { unreadCount: 0, firstUnreadMessageId: null, throughMessageId: null },
+    });
+    const callsBeforeOpen = vi.mocked(window.lunabot.agent.readConversationPage).mock.calls.length;
+    const queueCallsBeforeOpen = vi.mocked(window.lunabot.agent.listQueue).mock.calls.length;
+    vi.mocked(window.lunabot.agent.readConversationPage).mockResolvedValue(stalePage);
+
+    await fireEvent.click(screen.getByRole("button", { name: /Chief/ }));
+    await waitFor(() => expect(window.lunabot.agent.readConversationPage).toHaveBeenCalledTimes(callsBeforeOpen + 2));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(window.lunabot.agent.readConversationPage).toHaveBeenCalledTimes(callsBeforeOpen + 2);
+    expect(window.lunabot.agent.markConversationRead).toHaveBeenCalledWith({
+      botId: "chief",
+      throughMessageId: "reply-applied-revision",
+    });
+    expect(window.lunabot.agent.listQueue).toHaveBeenCalledTimes(queueCallsBeforeOpen);
+  });
+
+  it("applies an explicit read after an older automatic read", async () => {
+    render(() => <App />);
+    await screen.findByRole("heading", { name: "Chief" });
+    const firstPage = testConversationPage(
+      "chief",
+      [
+        {
+          id: "reply-automatic-first",
+          author: "assistant",
+          text: "First automatic reply",
+          createdAt: "2026-08-30T02:03:00.000Z",
+          status: "completed",
+        },
+      ],
+      {
+        revision: 2,
+        readState: { unreadCount: 1, firstUnreadMessageId: "reply-automatic-first", throughMessageId: null },
+      },
+    );
+    emitAgentEvent?.({ type: "conversation-page", page: firstPage });
+    await waitFor(() => expect(window.lunabot.agent.markConversationRead).toHaveBeenCalledOnce());
+
+    await fireEvent.click(screen.getByRole("button", { name: /Sales Outbound/ }));
+    await screen.findByRole("heading", { name: "Sales Outbound" });
+    const newerPage = testConversationPage(
+      "chief",
+      [
+        ...firstPage.messages,
+        {
+          id: "reply-explicit-newer",
+          author: "assistant",
+          text: "Newer reply while closed",
+          createdAt: "2026-08-30T02:04:00.000Z",
+          status: "completed",
+        },
+      ],
+      {
+        revision: 3,
+        readState: {
+          unreadCount: 1,
+          firstUnreadMessageId: "reply-explicit-newer",
+          throughMessageId: "reply-automatic-first",
+        },
+      },
+    );
+    emitAgentEvent?.({ type: "conversation-page", page: newerPage });
+    vi.mocked(window.lunabot.agent.readConversationPage).mockResolvedValueOnce(newerPage);
+
+    await fireEvent.click(screen.getByRole("button", { name: /Chief/ }));
+    await waitFor(() =>
+      expect(window.lunabot.agent.markConversationRead).toHaveBeenNthCalledWith(2, {
+        botId: "chief",
+        throughMessageId: "reply-explicit-newer",
+      }),
+    );
+    await waitFor(() => expect(screen.queryByRole("status", { name: "1 new message" })).not.toBeInTheDocument());
+  });
+
+  it("marks the latest visible reply when a chat-open reload fails", async () => {
+    render(() => <App />);
+    await screen.findByRole("heading", { name: "Chief" });
+    await fireEvent.click(screen.getByRole("button", { name: /Sales Outbound/ }));
+    await screen.findByRole("heading", { name: "Sales Outbound" });
+    emitAgentEvent?.({
+      type: "conversation-page",
+      page: testConversationPage(
+        "chief",
+        [
+          {
+            id: "reply-before-load-failure",
+            author: "assistant",
+            text: "Visible reply before load failure",
+            createdAt: "2026-08-30T02:04:00.000Z",
+            status: "completed",
+          },
+        ],
+        {
+          revision: 2,
+          readState: { unreadCount: 1, firstUnreadMessageId: "reply-before-load-failure", throughMessageId: null },
+        },
+      ),
+    });
+    vi.mocked(window.lunabot.agent.readConversationPage).mockRejectedValueOnce(new Error("Reload unavailable"));
+
+    await fireEvent.click(screen.getByRole("button", { name: /Chief/ }));
+    expect(await screen.findByText("Reload unavailable")).toBeInTheDocument();
+    await waitFor(() =>
+      expect(window.lunabot.agent.markConversationRead).toHaveBeenCalledWith({
+        botId: "chief",
+        throughMessageId: "reply-before-load-failure",
+      }),
+    );
+    await waitFor(() => expect(screen.queryByRole("status", { name: "1 new message" })).not.toBeInTheDocument());
+  });
+
+  it("rejects a permission approval and keeps the error visible", async () => {
+    vi.mocked(window.lunabot.agent.respondToApproval).mockRejectedValueOnce(
+      new Error("This approval has already been resolved."),
+    );
+    render(() => <App />);
+    await screen.findByRole("heading", { name: "Chief" });
+    await confirmOnboardingModel();
+    emitAgentEvent?.({
+      type: "approval",
+      approval: {
+        requestId: 14,
+        botId: "chief",
+        threadId: "thread-1",
+        turnId: "turn-1",
+        kind: "permissions",
+        command: null,
+        cwd: null,
+        reason: "The agent needs access to the project files.",
+        grantRoot: null,
+        permissions: {
+          fileSystem: { read: ["/tmp/project"], write: ["/tmp/project/out"] },
+          network: true,
+        },
+      },
+    });
+
+    expect(await screen.findByText("Grant permissions?")).toBeInTheDocument();
+    expect(screen.getByText("Network access")).toBeInTheDocument();
+    await fireEvent.click(screen.getByRole("button", { name: "Reject" }));
+    await waitFor(() =>
+      expect(window.lunabot.agent.respondToApproval).toHaveBeenCalledWith({
+        requestId: 14,
+        decision: "decline",
+      }),
+    );
+    expect(await screen.findByText("This approval has already been resolved.")).toBeInTheDocument();
+  });
+
+  it("opens the recipient chat from a persistent agent exchange", async () => {
+    vi.mocked(window.lunabot.agent.readConversation).mockImplementation(async (botId) => ({
+      botId,
+      threadId: "thread-1",
+      activeTurnId: null,
+      revision: 1,
+      messages:
+        botId === "chief"
+          ? [
+              {
+                id: "outbox-message-1",
+                author: "system",
+                source: "system",
+                text: "Prepare report",
+                createdAt: new Date().toISOString(),
+                status: "completed",
+                exchange: {
+                  direction: "outgoing",
+                  messageId: "message-1",
+                  senderBotId: "chief",
+                  recipientBotIds: ["sales-outbound"],
+                  replyToMessageId: null,
+                  deliveries: [
+                    {
+                      id: "delivery-1",
+                      recipientBotId: "sales-outbound",
+                      status: "queued",
+                      position: 1,
+                      error: null,
+                    },
+                  ],
+                },
+              },
+            ]
+          : [],
+    }));
+    render(() => <App />);
+    await screen.findByRole("heading", { name: "Chief" });
+    expect(await screen.findByText("Messaged")).toBeInTheDocument();
+    await fireEvent.click(screen.getByRole("button", { name: "Go to the chat with Sales Outbound" }));
+    expect(await screen.findByRole("heading", { name: "Sales Outbound" })).toBeInTheDocument();
+    expect(screen.queryByRole("dialog", { name: "Messages with Sales Outbound" })).not.toBeInTheDocument();
+  });
+
+  it("shows an incoming agent marker without duplicating raw collaborator input", async () => {
+    vi.mocked(window.lunabot.agent.readConversation).mockImplementation(async (botId) => ({
+      botId,
+      threadId: "thread-chief",
+      activeTurnId: null,
+      revision: 1,
+      messages:
+        botId === "chief"
+          ? [
+              {
+                id: "delivery-reply-1",
+                author: "agent",
+                source: "agent",
+                senderBotId: "sales-outbound",
+                text: "RAW_COLLABORATOR_RESULT",
+                createdAt: "2026-08-12T10:00:00.000Z",
+                status: "completed",
+                exchange: {
+                  direction: "incoming",
+                  messageId: "reply-1",
+                  senderBotId: "sales-outbound",
+                  recipientBotIds: ["chief"],
+                  replyToMessageId: "request-1",
+                  deliveries: [
+                    {
+                      id: "delivery-reply-1",
+                      recipientBotId: "chief",
+                      status: "completed",
+                      position: null,
+                      error: null,
+                    },
+                  ],
+                },
+              },
+              {
+                id: "assistant-summary-1",
+                author: "assistant",
+                text: "Sales Outbound reports that the pipeline is ready.",
+                createdAt: "2026-08-12T10:00:01.000Z",
+                status: "completed",
+              },
+            ]
+          : [],
+    }));
+
+    render(() => <App />);
+    expect(await screen.findByRole("button", { name: "Go to the chat with Sales Outbound" })).toBeInTheDocument();
+    expect(screen.queryByText("RAW_COLLABORATOR_RESULT")).not.toBeInTheDocument();
+    expect(screen.getByText("Sales Outbound reports that the pipeline is ready.")).toBeInTheDocument();
+  });
+
+  it("does not let a late history refresh overwrite a newer streamed snapshot", async () => {
+    let resolveHistory: ((snapshot: ConversationSnapshot) => void) | undefined;
+    vi.mocked(window.lunabot.agent.readConversation).mockImplementation(
+      (botId) =>
+        new Promise<ConversationSnapshot>((resolve) => {
+          resolveHistory = resolve;
+          expect(botId).toBe("chief");
+        }),
+    );
+
+    render(() => <App />);
+    await screen.findByRole("heading", { name: "Chief" });
+    emitAgentEvent?.({
+      type: "conversation",
+      snapshot: {
+        botId: "chief",
+        threadId: "thread-chief",
+        activeTurnId: "turn-live",
+        revision: 2,
+        messages: [
+          {
+            id: "live-message",
+            author: "assistant",
+            text: "Newest streamed answer",
+            createdAt: "2026-08-12T10:00:01.000Z",
+            status: "streaming",
+          },
+        ],
+      },
+    });
+    expect(await screen.findByText("Newest streamed answer")).toBeInTheDocument();
+
+    resolveHistory?.({
+      botId: "chief",
+      threadId: "thread-chief",
+      activeTurnId: null,
+      revision: 1,
+      messages: [
+        {
+          id: "old-message",
+          author: "assistant",
+          text: "Stale history answer",
+          createdAt: "2026-08-12T09:59:59.000Z",
+          status: "completed",
+        },
+      ],
+    });
+
+    await waitFor(() => {
+      expect(screen.getByText("Newest streamed answer")).toBeInTheDocument();
+      expect(screen.queryByText("Stale history answer")).not.toBeInTheDocument();
+    });
+  });
+
+  it("persists settings and opens managed attachment actions", async () => {
+    render(() => <App />);
+    await fireEvent.click(await screen.findByRole("button", { name: "View agent settings" }));
+    const name = await screen.findByRole("textbox", { name: "Agent name" });
+    await fireEvent.input(name, { target: { value: "Coordinator" } });
+    await fireEvent.blur(name);
+    await waitFor(() =>
+      expect(window.lunabot.agent.updateBot).toHaveBeenCalledWith({
+        botId: "chief",
+        name: "Coordinator",
+      }),
+    );
+    await fireEvent.click(screen.getByRole("button", { name: "Close details" }));
+
+    emitAgentEvent?.({
+      type: "conversation",
+      snapshot: {
+        botId: "chief",
+        threadId: null,
+        activeTurnId: null,
+        revision: 1,
+        messages: [
+          {
+            id: "file-message",
+            author: "user",
+            text: "",
+            createdAt: new Date().toISOString(),
+            status: "completed",
+            attachments: [attachment("file-1", "brief.pdf", "pdf")],
+          },
+        ],
+      },
+    });
+    await fireEvent.click(await screen.findByRole("button", { name: "Preview brief.pdf" }));
+    expect(screen.getByRole("dialog", { name: "brief.pdf" })).toBeInTheDocument();
+    await fireEvent.click(screen.getByRole("button", { name: "Show in Finder" }));
+    expect(window.lunabot.agent.openAttachment).toHaveBeenCalledWith({
+      attachmentId: "file-1",
+      action: "reveal",
+    });
+  });
+
+  it("opens bot actions on right click and edits the selected agent", async () => {
+    render(() => <App />);
+    await screen.findByRole("heading", { name: "Chief" });
+    await fireEvent.contextMenu(screen.getByRole("button", { name: /Sales Outbound/ }), {
+      clientX: 120,
+      clientY: 90,
+    });
+    await fireEvent.pointerUp(screen.getByRole("menuitem", { name: "Edit agent" }), { button: 0 });
+    expect(await screen.findByRole("heading", { name: "Sales Outbound" })).toBeInTheDocument();
+    expect(await screen.findByRole("complementary", { name: "Agent settings" })).toBeInTheDocument();
+  });
+
+  it("duplicates an agent from its context menu and opens its empty conversation", async () => {
+    localStorage.setItem(SIDEBAR_PINS_STORAGE_KEY, JSON.stringify([{ kind: "agent", id: "sales-outbound" }]));
+    render(() => <App />);
+    await screen.findByRole("heading", { name: "Chief" });
+    await fireEvent.contextMenu(screen.getByRole("button", { name: "Sales Outbound, pinned agent" }), {
+      clientX: 120,
+      clientY: 90,
+    });
+
+    await fireEvent.pointerUp(screen.getByRole("menuitem", { name: "Duplicate agent" }), { button: 0 });
+
+    await waitFor(() => expect(window.lunabot.agent.duplicateBot).toHaveBeenCalledWith("sales-outbound"));
+    expect(await screen.findByRole("heading", { name: "Sales Outbound copy" })).toBeInTheDocument();
+    await waitFor(() => expect(window.lunabot.agent.readConversation).toHaveBeenCalledWith("sales-outbound-copy"));
+    expect(
+      within(screen.getByRole("region", { name: "Pinned chats" })).queryByRole("button", {
+        name: /Sales Outbound copy/,
+      }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("keeps the current selection and shows an error when duplication fails", async () => {
+    vi.mocked(window.lunabot.agent.duplicateBot).mockRejectedValueOnce(new Error("The agent is busy."));
+    render(() => <App />);
+    await screen.findByRole("heading", { name: "Chief" });
+    await fireEvent.contextMenu(screen.getByRole("button", { name: /Sales Outbound/ }), {
+      clientX: 120,
+      clientY: 90,
+    });
+
+    await fireEvent.pointerUp(screen.getByRole("menuitem", { name: "Duplicate agent" }), { button: 0 });
+
+    expect(await screen.findByText("Duplicating the agent didn't work")).toBeVisible();
+    expect(screen.getByRole("heading", { name: "Chief" })).toBeInTheDocument();
+  });
+
+  it("confirms and persistently deletes a bot from its context menu", async () => {
+    render(() => <App />);
+    await screen.findByRole("heading", { name: "Chief" });
+    const sales = screen.getByRole("button", { name: /Sales Outbound/ });
+    await fireEvent.contextMenu(sales, { clientX: 120, clientY: 90 });
+    await fireEvent.pointerUp(screen.getByRole("menuitem", { name: "Delete agent" }), { button: 0 });
+    expect(screen.getByRole("alertdialog", { name: "Delete Sales Outbound?" })).toBeInTheDocument();
+    await fireEvent.click(screen.getByRole("button", { name: "Delete" }));
+    await waitFor(() => expect(window.lunabot.agent.deleteBot).toHaveBeenCalledWith("sales-outbound"));
+    await waitFor(() => expect(screen.queryByRole("button", { name: /Sales Outbound/ })).not.toBeInTheDocument());
+  });
+
+  it("shows and clears the unread boundary in an agent conversation", async () => {
+    Object.defineProperty(window, "matchMedia", {
+      configurable: true,
+      value: vi.fn().mockReturnValue({ matches: false }),
+    });
+    const readState = {
+      unreadCount: 2,
+      firstUnreadMessageId: "agent-new-1",
+      throughMessageId: "agent-old",
+    };
+    vi.mocked(window.lunabot.agent.listConversationReads).mockResolvedValueOnce({
+      chief: readState,
+    });
+    vi.mocked(window.lunabot.agent.readConversation).mockResolvedValue({
+      botId: "chief",
+      threadId: "thread-chief",
+      activeTurnId: null,
+      revision: 3,
+      readState,
+      messages: [
+        {
+          id: "agent-old",
+          author: "user",
+          text: "Old message",
+          createdAt: "2026-08-19T09:00:00.000Z",
+          status: "completed",
+        },
+        {
+          id: "agent-new-1",
+          author: "agent",
+          source: "agent",
+          senderBotId: "sales-outbound",
+          text: "First unseen agent answer",
+          createdAt: "2026-08-19T09:01:00.000Z",
+          status: "completed",
+          exchange: {
+            direction: "incoming",
+            messageId: "agent-new-1",
+            senderBotId: "sales-outbound",
+            recipientBotIds: ["chief"],
+            replyToMessageId: null,
+            deliveries: [
+              {
+                id: "agent-new-1",
+                recipientBotId: "chief",
+                status: "completed",
+                position: null,
+                error: null,
+              },
+            ],
+          },
+        },
+        {
+          id: "agent-new-2",
+          author: "assistant",
+          text: "Second unseen answer",
+          createdAt: "2026-08-19T09:02:00.000Z",
+          status: "completed",
+        },
+      ],
+    });
+    vi.mocked(window.lunabot.agent.markConversationRead).mockResolvedValueOnce({
+      unreadCount: 0,
+      firstUnreadMessageId: null,
+      throughMessageId: "agent-new-2",
+    });
+
+    render(() => <App />);
+    expect(await screen.findByRole("status", { name: "2 new messages" })).toBeInTheDocument();
+    await screen.findByText("Message from");
+    expect(screen.getByRole("separator", { name: "New messages" })).toBeInTheDocument();
+    const scrollElement = document.querySelector<HTMLElement>(".conversation-scroll");
+    const divider = document.querySelector<HTMLElement>(".unread-messages-divider");
+    expect(scrollElement).not.toBeNull();
+    expect(divider).not.toBeNull();
+    if (!scrollElement || !divider) throw new Error("Unread conversation elements are missing.");
+    const firstUnreadMessage = divider.nextElementSibling;
+    expect(firstUnreadMessage).toBeInstanceOf(HTMLElement);
+    if (!(firstUnreadMessage instanceof HTMLElement)) {
+      throw new Error("The first unread conversation message is missing.");
+    }
+    scrollElement.scrollTop = 720;
+    Object.defineProperty(scrollElement, "getBoundingClientRect", {
+      configurable: true,
+      value: () => ({ top: 100, bottom: 700 }),
+    });
+    Object.defineProperty(divider, "getBoundingClientRect", {
+      configurable: true,
+      value: () => ({ top: 200, bottom: 212 }),
+    });
+    await fireEvent.scroll(scrollElement);
+    await waitFor(() => expect(screen.queryByRole("status", { name: "2 new messages" })).not.toBeInTheDocument());
+    Object.defineProperty(divider, "getBoundingClientRect", {
+      configurable: true,
+      value: () => ({ top: 80, bottom: 92 }),
+    });
+    await fireEvent.scroll(scrollElement);
+    expect(await screen.findByRole("status", { name: "2 new messages" })).toBeInTheDocument();
+    Object.defineProperty(firstUnreadMessage, "getBoundingClientRect", {
+      configurable: true,
+      value: () => ({ top: 100 + 1080 - scrollElement.scrollTop }),
+    });
+    const scrollTo = vi.fn((options: ScrollToOptions) => {
+      scrollElement.scrollTop = options.top ?? scrollElement.scrollTop;
+    });
+    Object.defineProperty(scrollElement, "scrollTo", { configurable: true, value: scrollTo });
+    await fireEvent.click(screen.getByRole("button", { name: "Jump to 2 new messages" }));
+    expect(scrollElement.scrollTop).toBe(1080);
+    expect(scrollTo).toHaveBeenCalledWith({ behavior: "smooth", top: 1080 });
+
+    await waitFor(() =>
+      expect(window.lunabot.agent.markConversationRead).toHaveBeenCalledWith({
+        botId: "chief",
+        throughMessageId: "agent-new-2",
+      }),
+    );
+    await waitFor(() => expect(screen.queryByRole("status", { name: "2 new messages" })).not.toBeInTheDocument());
+    await waitFor(() => expect(scrollTo).toHaveBeenLastCalledWith({ behavior: "smooth", top: 1080 }));
+    expect(scrollElement.scrollTop).toBe(1080);
+  });
+
+  it("keeps a reply unread while the open agent chat is in the background and clears it on focus", async () => {
+    const unreadPage = testConversationPage(
+      "chief",
+      [
+        {
+          id: "agent-background-answer",
+          author: "assistant",
+          text: "Ready while Luna Bot was in the background",
+          createdAt: "2026-08-19T09:03:00.000Z",
+          status: "completed",
+        },
+      ],
+      {
+        revision: 2,
+        readState: {
+          unreadCount: 1,
+          firstUnreadMessageId: "agent-background-answer",
+          throughMessageId: null,
+        },
+      },
+    );
+    render(() => <App />);
+    await screen.findByRole("heading", { name: "Chief" });
+    await waitFor(() => expect(emitDynamicIslandAction).toBeDefined());
+    vi.mocked(window.lunabot.agent.markConversationRead).mockClear();
+    vi.mocked(window.lunabot.agent.readConversationPage).mockResolvedValue(unreadPage);
+
+    window.dispatchEvent(new Event("blur"));
+    emitAgentEvent?.({ type: "conversation-page", page: unreadPage });
+
+    expect(await screen.findByText("Ready while Luna Bot was in the background")).toBeInTheDocument();
+    expect(screen.getByRole("status", { name: "1 new message" })).toBeInTheDocument();
+    expect(window.lunabot.agent.markConversationRead).not.toHaveBeenCalled();
+    await waitFor(() =>
+      expect(vi.mocked(window.lunabot.dynamicIsland.publishPresentation).mock.calls.at(-1)?.[0]).toMatchObject({
+        mode: "message",
+        message: { messageId: "agent-background-answer" },
+      }),
+    );
+
+    window.dispatchEvent(new Event("focus"));
+
+    await waitFor(() =>
+      expect(window.lunabot.agent.markConversationRead).toHaveBeenCalledWith({
+        botId: "chief",
+        throughMessageId: "agent-background-answer",
+      }),
+    );
+    await waitFor(() => expect(screen.queryByRole("status", { name: "1 new message" })).not.toBeInTheDocument());
+    await waitFor(() =>
+      expect(vi.mocked(window.lunabot.dynamicIsland.publishPresentation).mock.calls.at(-1)?.[0]).toMatchObject({
+        mode: "idle",
+      }),
+    );
+  });
+
+  it("keeps a queued snapshot unread when the app loses focus before rendering it", async () => {
+    render(() => <App />);
+    await screen.findByRole("heading", { name: "Chief" });
+    vi.mocked(window.lunabot.agent.markConversationRead).mockClear();
+
+    emitAgentEvent?.({
+      type: "conversation",
+      snapshot: {
+        botId: "chief",
+        threadId: "thread-chief",
+        activeTurnId: null,
+        revision: 2,
+        messages: [
+          {
+            id: "agent-focus-race",
+            author: "assistant",
+            text: "Rendered after focus was lost",
+            createdAt: "2026-08-19T09:03:30.000Z",
+            status: "completed",
+          },
+        ],
+      },
+    });
+    window.dispatchEvent(new Event("blur"));
+
+    expect(await screen.findByText("Rendered after focus was lost")).toBeInTheDocument();
+    expect(screen.getByRole("status", { name: "1 new message" })).toBeInTheDocument();
+    expect(window.lunabot.agent.markConversationRead).not.toHaveBeenCalled();
+  });
+
+  it("extends an in-flight focus read to a newer visible agent reply", async () => {
+    const oldPage = testConversationPage(
+      "chief",
+      [
+        {
+          id: "agent-focus-old",
+          author: "assistant",
+          text: "Older background reply",
+          createdAt: "2026-08-19T09:03:00.000Z",
+          status: "completed",
+        },
+      ],
+      {
+        revision: 2,
+        readState: { unreadCount: 1, firstUnreadMessageId: "agent-focus-old", throughMessageId: null },
+      },
+    );
+    const newPage = testConversationPage(
+      "chief",
+      [
+        ...oldPage.messages,
+        {
+          id: "agent-focus-new",
+          author: "assistant",
+          text: "Newer reply during focus read",
+          createdAt: "2026-08-19T09:04:00.000Z",
+          status: "completed",
+        },
+      ],
+      {
+        revision: 3,
+        readState: { unreadCount: 2, firstUnreadMessageId: "agent-focus-old", throughMessageId: null },
+      },
+    );
+    let resolveFirstRead: ((state: NonNullable<ConversationPage["readState"]>) => void) | undefined;
+    render(() => <App />);
+    await screen.findByRole("heading", { name: "Chief" });
+    window.dispatchEvent(new Event("blur"));
+    emitAgentEvent?.({ type: "conversation-page", page: oldPage });
+    expect(await screen.findByRole("status", { name: "1 new message" })).toBeInTheDocument();
+    vi.mocked(window.lunabot.agent.readConversationPage).mockResolvedValue(oldPage);
+    vi.mocked(window.lunabot.agent.markConversationRead)
+      .mockReset()
+      .mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            resolveFirstRead = resolve;
+          }),
+      )
+      .mockImplementation(async (input) => ({
+        unreadCount: 0,
+        firstUnreadMessageId: null,
+        throughMessageId: input.throughMessageId,
+      }));
+
+    window.dispatchEvent(new Event("focus"));
+    await waitFor(() =>
+      expect(window.lunabot.agent.markConversationRead).toHaveBeenCalledWith({
+        botId: "chief",
+        throughMessageId: "agent-focus-old",
+      }),
+    );
+    emitAgentEvent?.({ type: "conversation-page", page: newPage });
+    expect(await screen.findByText("Newer reply during focus read")).toBeInTheDocument();
+    resolveFirstRead?.({
+      unreadCount: 1,
+      firstUnreadMessageId: "agent-focus-new",
+      throughMessageId: "agent-focus-old",
+    });
+
+    await waitFor(() =>
+      expect(window.lunabot.agent.markConversationRead).toHaveBeenCalledWith({
+        botId: "chief",
+        throughMessageId: "agent-focus-new",
+      }),
+    );
+    await waitFor(() => expect(screen.queryByRole("status", { name: /new messages?/ })).not.toBeInTheDocument());
+  });
+
+  it("keeps a newer agent reply unread when an earlier focus read resolves in the background", async () => {
+    const oldPage = testConversationPage(
+      "chief",
+      [
+        {
+          id: "agent-stale-read-old",
+          author: "assistant",
+          text: "Reply visible before focus",
+          createdAt: "2026-08-19T09:03:00.000Z",
+          status: "completed",
+        },
+      ],
+      {
+        revision: 2,
+        readState: { unreadCount: 1, firstUnreadMessageId: "agent-stale-read-old", throughMessageId: null },
+      },
+    );
+    const newPage = testConversationPage(
+      "chief",
+      [
+        ...oldPage.messages,
+        {
+          id: "agent-stale-read-new",
+          author: "assistant",
+          text: "Reply received after focus was lost",
+          createdAt: "2026-08-19T09:04:00.000Z",
+          status: "completed",
+        },
+      ],
+      {
+        revision: 3,
+        readState: { unreadCount: 2, firstUnreadMessageId: "agent-stale-read-old", throughMessageId: null },
+      },
+    );
+    let resolveFirstRead: ((state: NonNullable<ConversationPage["readState"]>) => void) | undefined;
+    render(() => <App />);
+    await screen.findByRole("heading", { name: "Chief" });
+    window.dispatchEvent(new Event("blur"));
+    emitAgentEvent?.({ type: "conversation-page", page: oldPage });
+    expect(await screen.findByRole("status", { name: "1 new message" })).toBeInTheDocument();
+    vi.mocked(window.lunabot.agent.readConversationPage).mockResolvedValue(oldPage);
+    vi.mocked(window.lunabot.agent.markConversationRead)
+      .mockReset()
+      .mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            resolveFirstRead = resolve;
+          }),
+      )
+      .mockImplementation(async (input) => ({
+        unreadCount: 0,
+        firstUnreadMessageId: null,
+        throughMessageId: input.throughMessageId,
+      }));
+
+    window.dispatchEvent(new Event("focus"));
+    await waitFor(() =>
+      expect(window.lunabot.agent.markConversationRead).toHaveBeenCalledWith({
+        botId: "chief",
+        throughMessageId: "agent-stale-read-old",
+      }),
+    );
+    window.dispatchEvent(new Event("blur"));
+    emitAgentEvent?.({ type: "conversation-page", page: newPage });
+    expect(await screen.findByText("Reply received after focus was lost")).toBeInTheDocument();
+    resolveFirstRead?.({
+      unreadCount: 0,
+      firstUnreadMessageId: null,
+      throughMessageId: "agent-stale-read-old",
+    });
+
+    await waitFor(() => expect(screen.getByRole("status", { name: "1 new message" })).toBeInTheDocument());
+    expect(window.lunabot.agent.markConversationRead).toHaveBeenCalledTimes(1);
+
+    window.dispatchEvent(new Event("focus"));
+    await waitFor(() =>
+      expect(window.lunabot.agent.markConversationRead).toHaveBeenCalledWith({
+        botId: "chief",
+        throughMessageId: "agent-stale-read-new",
+      }),
+    );
+    await waitFor(() => expect(screen.queryByRole("status", { name: /new messages?/ })).not.toBeInTheDocument());
+  });
+
+  it("keeps another agent new until that agent is opened after focus returns", async () => {
+    const unreadPage = testConversationPage(
+      "sales-outbound",
+      [
+        {
+          id: "sales-background-answer",
+          author: "assistant",
+          text: "Sales result from the background",
+          createdAt: "2026-08-19T09:04:00.000Z",
+          status: "completed",
+        },
+      ],
+      {
+        revision: 2,
+        readState: {
+          unreadCount: 1,
+          firstUnreadMessageId: "sales-background-answer",
+          throughMessageId: null,
+        },
+      },
+    );
+    render(() => <App />);
+    await screen.findByRole("heading", { name: "Chief" });
+    vi.mocked(window.lunabot.agent.markConversationRead).mockClear();
+
+    window.dispatchEvent(new Event("blur"));
+    emitAgentEvent?.({ type: "conversation-page", page: unreadPage });
+    window.dispatchEvent(new Event("focus"));
+
+    const sales = screen.getByRole("button", { name: /Sales Outbound/ });
+    await waitFor(() => expect(sales).toHaveTextContent("1 new reply"));
+    expect(window.lunabot.agent.markConversationRead).not.toHaveBeenCalled();
+    await waitFor(() =>
+      expect(vi.mocked(window.lunabot.dynamicIsland.publishPresentation).mock.calls.at(-1)?.[0]).toMatchObject({
+        mode: "message",
+        message: { bot: { id: "sales-outbound" }, messageId: "sales-background-answer" },
+      }),
+    );
+
+    vi.mocked(window.lunabot.agent.readConversationPage).mockResolvedValue(unreadPage);
+    await fireEvent.click(sales);
+
+    await waitFor(() =>
+      expect(window.lunabot.agent.markConversationRead).toHaveBeenCalledWith({
+        botId: "sales-outbound",
+        throughMessageId: "sales-background-answer",
+      }),
+    );
+    await waitFor(() => expect(sales).not.toHaveTextContent("1 new reply"));
+    await waitFor(() =>
+      expect(vi.mocked(window.lunabot.dynamicIsland.publishPresentation).mock.calls.at(-1)?.[0]).toMatchObject({
+        mode: "idle",
+      }),
+    );
+  });
+
+  it("shows a completed indicator only until the background app receives focus", async () => {
+    render(() => <App />);
+    await screen.findByRole("heading", { name: "Chief" });
+    const chief = screen.getByRole("button", { name: /Chief/ });
+
+    emitAgentEvent?.({
+      type: "turn-completed",
+      botId: "chief",
+      threadId: "thread-chief",
+      turnId: "turn-foreground",
+      status: "completed",
+    });
+    expect(chief).not.toHaveTextContent("Responded");
+
+    window.dispatchEvent(new Event("blur"));
+    emitAgentEvent?.({
+      type: "turn-completed",
+      botId: "chief",
+      threadId: "thread-chief",
+      turnId: "turn-background",
+      status: "completed",
+    });
+    expect(chief).toHaveTextContent("Responded");
+
+    window.dispatchEvent(new Event("focus"));
+    expect(chief).not.toHaveTextContent("Responded");
+  });
+
+  it("keeps a message read when it arrives in the open agent chat", async () => {
+    Object.defineProperty(window, "matchMedia", {
+      configurable: true,
+      value: vi.fn().mockReturnValue({ matches: true }),
+    });
+    render(() => <App />);
+    await screen.findByRole("heading", { name: "Chief" });
+    await waitFor(() => expect(window.lunabot.agent.readConversation).toHaveBeenCalledWith("chief"));
+
+    emitAgentEvent?.({
+      type: "conversation-delta",
+      botId: "chief",
+      threadId: "thread-chief",
+      turnId: "turn-live",
+      messageId: "agent-visible-answer",
+      delta: "Visible as it arrives",
+      createdAt: "2026-08-19T09:03:00.000Z",
+      revision: 1,
+    });
+
+    await waitFor(() =>
+      expect(document.querySelector('[data-chat-search-message="agent-visible-answer"]')).toHaveTextContent(
+        "Visible as it arrives",
+      ),
+    );
+    expect(screen.queryByRole("status", { name: "1 new message" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("separator", { name: "New messages" })).not.toBeInTheDocument();
+    await waitFor(() =>
+      expect(window.lunabot.agent.markConversationRead).toHaveBeenCalledWith({
+        botId: "chief",
+        throughMessageId: "agent-visible-answer",
+      }),
+    );
+  });
+
+  it("removes a citation marker split across streaming deltas", async () => {
+    Object.defineProperty(window, "matchMedia", {
+      configurable: true,
+      value: vi.fn().mockReturnValue({ matches: true }),
+    });
+    render(() => <App />);
+    await screen.findByRole("heading", { name: "Chief" });
+
+    emitAgentEvent?.({
+      type: "conversation-delta",
+      botId: "chief",
+      threadId: "thread-chief",
+      turnId: "turn-live",
+      messageId: "agent-cited-answer",
+      delta: "Storms are likely.\u{e200}cite\u{e202}turn0fore",
+      createdAt: "2026-08-19T09:03:00.000Z",
+      revision: 1,
+    });
+
+    const message = await waitFor(() => {
+      const element = document.querySelector('[data-chat-search-message="agent-cited-answer"]');
+      expect(element).toHaveTextContent("Storms are likely.");
+      return element;
+    });
+    expect(message).not.toHaveTextContent("cite");
+
+    emitAgentEvent?.({
+      type: "conversation-delta",
+      botId: "chief",
+      threadId: "thread-chief",
+      turnId: "turn-live",
+      messageId: "agent-cited-answer",
+      delta: "cast0\u{e201} Take care.",
+      createdAt: "2026-08-19T09:03:00.000Z",
+      revision: 2,
+    });
+
+    await waitFor(() => expect(message).toHaveTextContent("Storms are likely. Take care."));
+    expect(message).not.toHaveTextContent("turn0forecast0");
+  });
+
+  it("clears unread messages when entering an agent chat", async () => {
+    const unreadState = {
+      unreadCount: 1,
+      firstUnreadMessageId: "sales-new",
+      throughMessageId: null,
+    };
+    vi.mocked(window.lunabot.agent.listConversationReads).mockResolvedValueOnce({
+      "sales-outbound": unreadState,
+    });
+    vi.mocked(window.lunabot.agent.readConversation).mockImplementation(async (botId) =>
+      botId === "sales-outbound"
+        ? {
+            botId,
+            threadId: "thread-sales",
+            activeTurnId: null,
+            revision: 1,
+            readState: unreadState,
+            messages: [
+              {
+                id: "sales-new",
+                author: "assistant",
+                text: "A new sales reply",
+                createdAt: "2026-08-19T09:03:00.000Z",
+                status: "completed",
+              },
+            ],
+          }
+        : {
+            botId,
+            threadId: null,
+            activeTurnId: null,
+            revision: 0,
+            readState: { unreadCount: 0, firstUnreadMessageId: null, throughMessageId: null },
+            messages: [],
+          },
+    );
+
+    render(() => <App />);
+    await screen.findByRole("heading", { name: "Chief" });
+    await fireEvent.click(screen.getByRole("button", { name: /Sales Outbound/ }));
+
+    expect(await screen.findByText("A new sales reply")).toBeInTheDocument();
+    await waitFor(() =>
+      expect(window.lunabot.agent.markConversationRead).toHaveBeenCalledWith({
+        botId: "sales-outbound",
+        throughMessageId: "sales-new",
+      }),
+    );
+    await waitFor(() => expect(screen.queryByRole("status", { name: "1 new message" })).not.toBeInTheDocument());
+    expect(screen.queryByRole("separator", { name: "New messages" })).not.toBeInTheDocument();
+  });
+
+  it("clears unread messages in the selected agent chat when queue loading fails", async () => {
+    const unreadState = {
+      unreadCount: 1,
+      firstUnreadMessageId: "chief-new",
+      throughMessageId: null,
+    };
+    vi.mocked(window.lunabot.agent.listConversationReads).mockResolvedValueOnce({ chief: unreadState });
+    vi.mocked(window.lunabot.agent.readConversation).mockResolvedValue({
+      botId: "chief",
+      threadId: "thread-chief",
+      activeTurnId: null,
+      revision: 1,
+      readState: unreadState,
+      messages: [
+        {
+          id: "chief-new",
+          author: "assistant",
+          text: "A new reply from Chief",
+          createdAt: "2026-08-19T09:03:00.000Z",
+          status: "completed",
+        },
+      ],
+    });
+    vi.mocked(window.lunabot.agent.listQueue).mockRejectedValue(new Error("Queue unavailable"));
+
+    render(() => <App />);
+    expect(await screen.findByRole("status", { name: "1 new message" })).toBeInTheDocument();
+    await screen.findByText("A new reply from Chief");
+    await fireEvent.click(screen.getByRole("button", { name: /Chief/ }));
+
+    await waitFor(() =>
+      expect(window.lunabot.agent.markConversationRead).toHaveBeenCalledWith({
+        botId: "chief",
+        throughMessageId: "chief-new",
+      }),
+    );
+    await waitFor(() => expect(screen.queryByRole("status", { name: "1 new message" })).not.toBeInTheDocument());
+    expect(screen.queryByRole("separator", { name: "New messages" })).not.toBeInTheDocument();
+  });
+
+  it("preserves explicit read intent when an agent status change supersedes the page request", async () => {
+    const unreadState = {
+      unreadCount: 1,
+      firstUnreadMessageId: "chief-status-reply",
+      throughMessageId: null,
+    };
+    const unreadPage = testConversationPage(
+      "chief",
+      [
+        {
+          id: "chief-status-reply",
+          author: "assistant",
+          text: "Reply visible after status change",
+          createdAt: "2026-08-19T09:05:00.000Z",
+          status: "completed",
+        },
+      ],
+      { readState: unreadState },
+    );
+    vi.mocked(window.lunabot.agent.listConversationReads).mockResolvedValueOnce({ chief: unreadState });
+    vi.mocked(window.lunabot.agent.readConversation).mockResolvedValue({
+      botId: "chief",
+      threadId: unreadPage.threadId,
+      activeTurnId: null,
+      revision: unreadPage.revision,
+      readState: unreadState,
+      messages: unreadPage.messages,
+    });
+    render(() => <App />);
+    expect(await screen.findByRole("status", { name: "1 new message" })).toBeInTheDocument();
+
+    let resolveFirstPage: ((page: ConversationPage) => void) | undefined;
+    let resolveSecondPage: ((page: ConversationPage) => void) | undefined;
+    vi.mocked(window.lunabot.agent.readConversationPage)
+      .mockImplementationOnce(
+        async (): Promise<ConversationPage> =>
+          await new Promise((resolve) => {
+            resolveFirstPage = resolve;
+          }),
+      )
+      .mockImplementationOnce(
+        async (): Promise<ConversationPage> =>
+          await new Promise((resolve) => {
+            resolveSecondPage = resolve;
+          }),
+      );
+    await fireEvent.click(screen.getByRole("button", { name: /Chief/ }));
+    await waitFor(() => expect(resolveFirstPage).toBeDefined());
+
+    const currentStatus = await window.lunabot.agent.getStatus();
+    emitAgentEvent?.({ type: "status", status: { ...currentStatus, phase: "starting" } });
+    await waitFor(() => expect(resolveSecondPage).toBeDefined());
+    resolveFirstPage?.(unreadPage);
+    resolveSecondPage?.(unreadPage);
+
+    await waitFor(() =>
+      expect(window.lunabot.agent.markConversationRead).toHaveBeenCalledWith({
+        botId: "chief",
+        throughMessageId: "chief-status-reply",
+      }),
+    );
+    await waitFor(() => expect(screen.queryByRole("status", { name: "1 new message" })).not.toBeInTheDocument());
+  });
+
+  it("marks a newer reply that arrives while an opened agent chat is being marked read", async () => {
+    const unreadState = {
+      unreadCount: 1,
+      firstUnreadMessageId: "chief-old-reply",
+      throughMessageId: null,
+    };
+    vi.mocked(window.lunabot.agent.listConversationReads).mockResolvedValueOnce({ chief: unreadState });
+    vi.mocked(window.lunabot.agent.readConversation).mockResolvedValue({
+      botId: "chief",
+      threadId: "thread-chief",
+      activeTurnId: null,
+      revision: 1,
+      readState: unreadState,
+      messages: [
+        {
+          id: "chief-old-reply",
+          author: "assistant",
+          text: "First visible reply",
+          createdAt: "2026-08-19T09:03:00.000Z",
+          status: "completed",
+        },
+      ],
+    });
+    let resolveInitialMark: ((state: NonNullable<ConversationPage["readState"]>) => void) | undefined;
+    vi.mocked(window.lunabot.agent.markConversationRead)
+      .mockImplementationOnce(
+        async (): Promise<NonNullable<ConversationPage["readState"]>> =>
+          await new Promise((resolve) => {
+            resolveInitialMark = resolve;
+          }),
+      )
+      .mockImplementation(async (input) => ({
+        unreadCount: 0,
+        firstUnreadMessageId: null,
+        throughMessageId: input.throughMessageId,
+      }));
+
+    render(() => <App />);
+    expect(await screen.findByRole("status", { name: "1 new message" })).toBeInTheDocument();
+    await fireEvent.click(screen.getByRole("button", { name: /Chief/ }));
+    await waitFor(() =>
+      expect(window.lunabot.agent.markConversationRead).toHaveBeenCalledWith({
+        botId: "chief",
+        throughMessageId: "chief-old-reply",
+      }),
+    );
+
+    emitAgentEvent?.({
+      type: "conversation-page",
+      page: testConversationPage(
+        "chief",
+        [
+          {
+            id: "chief-old-reply",
+            author: "assistant",
+            text: "First visible reply",
+            createdAt: "2026-08-19T09:03:00.000Z",
+            status: "completed",
+          },
+          {
+            id: "chief-newer-reply",
+            author: "assistant",
+            text: "Newer visible reply",
+            createdAt: "2026-08-19T09:04:00.000Z",
+            status: "completed",
+          },
+        ],
+        {
+          revision: 2,
+          readState: { unreadCount: 2, firstUnreadMessageId: "chief-old-reply", throughMessageId: null },
+        },
+      ),
+    });
+
+    expect(await screen.findByText("Newer visible reply")).toBeInTheDocument();
+    resolveInitialMark?.({
+      unreadCount: 1,
+      firstUnreadMessageId: "chief-newer-reply",
+      throughMessageId: "chief-old-reply",
+    });
+    await waitFor(() =>
+      expect(window.lunabot.agent.markConversationRead).toHaveBeenCalledWith({
+        botId: "chief",
+        throughMessageId: "chief-newer-reply",
+      }),
+    );
+    await waitFor(() => expect(screen.queryByRole("status", { name: /new messages?/ })).not.toBeInTheDocument());
+  });
+
+  it("keeps the agent unread state when marking it fails", async () => {
+    Object.defineProperty(window, "matchMedia", {
+      configurable: true,
+      value: vi.fn().mockReturnValue({ matches: false }),
+    });
+    const readState = {
+      unreadCount: 1,
+      firstUnreadMessageId: "agent-new",
+      throughMessageId: null,
+    };
+    vi.mocked(window.lunabot.agent.listConversationReads).mockResolvedValueOnce({
+      chief: readState,
+    });
+    vi.mocked(window.lunabot.agent.readConversation).mockResolvedValue({
+      botId: "chief",
+      threadId: "thread-chief",
+      activeTurnId: null,
+      revision: 2,
+      readState,
+      messages: [
+        {
+          id: "agent-old-user",
+          author: "user",
+          text: "Previous request",
+          createdAt: "2026-08-19T09:00:00.000Z",
+          status: "completed",
+        },
+        {
+          id: "agent-new",
+          author: "assistant",
+          text: "Unseen answer",
+          createdAt: "2026-08-19T09:01:00.000Z",
+          status: "completed",
+        },
+      ],
+    });
+    vi.mocked(window.lunabot.agent.markConversationRead).mockRejectedValueOnce(new Error("Read state unavailable"));
+
+    render(() => <App />);
+    const banner = await screen.findByRole("status", { name: "1 new message" });
+    await screen.findByText("Unseen answer");
+    const scrollElement = document.querySelector<HTMLElement>(".conversation-scroll");
+    const divider = document.querySelector<HTMLElement>(".unread-messages-divider");
+    expect(scrollElement).not.toBeNull();
+    expect(divider).not.toBeNull();
+    if (!scrollElement || !divider) throw new Error("Unread conversation elements are missing.");
+    const firstUnreadMessage = divider.nextElementSibling;
+    expect(firstUnreadMessage).toBeInstanceOf(HTMLElement);
+    if (!(firstUnreadMessage instanceof HTMLElement)) {
+      throw new Error("The first unread conversation message is missing.");
+    }
+    scrollElement.scrollTop = 600;
+    Object.defineProperty(scrollElement, "getBoundingClientRect", {
+      configurable: true,
+      value: () => ({ top: 100 }),
+    });
+    Object.defineProperty(firstUnreadMessage, "getBoundingClientRect", {
+      configurable: true,
+      value: () => ({ top: 100 + 900 - scrollElement.scrollTop }),
+    });
+    Object.defineProperty(divider, "getBoundingClientRect", {
+      configurable: true,
+      value: () => ({ top: 100 + 840 - scrollElement.scrollTop }),
+    });
+    const scrollTo = vi.fn((options: ScrollToOptions) => {
+      scrollElement.scrollTop = options.top ?? scrollElement.scrollTop;
+    });
+    Object.defineProperty(scrollElement, "scrollTo", { configurable: true, value: scrollTo });
+    await fireEvent.click(within(banner).getByRole("button", { name: "Jump to 1 new message" }));
+
+    expect(await screen.findByText("Read state unavailable")).toBeInTheDocument();
+    expect(screen.getByRole("status", { name: "1 new message" })).toBeInTheDocument();
+    expect(screen.getByRole("separator", { name: "New messages" })).toBeInTheDocument();
+    expect(window.lunabot.agent.markConversationRead).toHaveBeenCalledWith({
+      botId: "chief",
+      throughMessageId: "agent-new",
+    });
+    await waitFor(() => expect(scrollTo).toHaveBeenLastCalledWith({ behavior: "smooth", top: 840 }));
+    expect(scrollElement.scrollTop).toBe(840);
+  });
+});
+
+function attachment(id: string, name: string, kind: "image" | "pdf") {
+  return {
+    id,
+    name,
+    size: 2048,
+    kind: kind === "image" ? ("image" as const) : ("file" as const),
+    mimeType: kind === "image" ? "image/png" : "application/pdf",
+    previewKind: kind,
+    previewUrl: `lunabot-attachment://file/${id}`,
+  };
+}
