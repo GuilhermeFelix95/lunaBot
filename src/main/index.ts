@@ -753,6 +753,9 @@ function createWindow(): BrowserWindow {
     },
   });
 
+  // The menu stays installed so its accelerators keep working; only the bar is hidden.
+  if (process.platform !== "darwin") window.setMenuBarVisibility(false);
+
   window.once("ready-to-show", () => window.show());
   window.on("close", (event) => {
     rememberMainWindowBounds(window.getNormalBounds());
