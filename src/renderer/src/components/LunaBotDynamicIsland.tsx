@@ -1345,12 +1345,7 @@ function ApprovalContext(props: { item: DynamicIslandApprovalItem }): JSX.Elemen
 
 function IslandAvatar(props: { bot: DynamicIslandBotIdentity; working?: boolean }): JSX.Element {
   return (
-    <AgentAvatar
-      bot={props.bot}
-      motion={props.working ? "working" : "idle"}
-      shape={{ kind: "name", name: "cercle" }}
-      class="dynamic-island-surface-avatar"
-    />
+    <AgentAvatar bot={props.bot} motion={props.working ? "working" : "idle"} class="dynamic-island-surface-avatar" />
   );
 }
 
