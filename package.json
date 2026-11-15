@@ -2,7 +2,7 @@
   "name": "lunabot",
   "productName": "Luna Bot",
   "desktopName": "lunabot.desktop",
-  "version": "0.2.2",
+  "version": "0.2.3",
   "description": "A local-first multi-agent desktop workspace for Codex, Claude, and Grok.",
   "author": "GuilhermeFelix95",
   "license": "Apache-2.0",
