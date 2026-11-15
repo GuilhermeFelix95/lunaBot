@@ -4,6 +4,15 @@ All notable changes to Luna Bot are recorded here.
 
 ## [Unreleased]
 
+## [0.2.2] - 2026-11-15
+
+### Fixed
+
+- The chat keeps following the latest message while long messages and replies arrive, instead of stopping partway down.
+- A bot no longer freezes the whole app (the main process at full CPU) when a message waits behind a turn that already
+  finished. The queue resumes by itself.
+- The taskbar shows the Luna Bot icon on Windows even when the development version of the app has run on the same computer.
+
 ## [0.2.1] - 2026-11-15
 
 ### Added
