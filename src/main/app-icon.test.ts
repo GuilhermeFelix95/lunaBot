@@ -1,7 +1,18 @@
 import { describe, expect, it } from "vitest";
-import { appIconFileName, readAppVariant, resolveAppIconPath, windowsAppUserModelId } from "./app-icon";
+import {
+  appIconFileName,
+  applicationName,
+  readAppVariant,
+  resolveAppIconPath,
+  windowsAppUserModelId,
+} from "./app-icon";
 
 describe("Windows app identity", () => {
+  it("names an unpackaged run differently, so its notification shortcut never overwrites the installed app's", () => {
+    expect(applicationName(true)).toBe("Luna Bot");
+    expect(applicationName(false)).toBe("Luna Bot Dev");
+  });
+
   it("keeps the installer's id for the packaged app and a separate one for unpackaged runs", () => {
     expect(windowsAppUserModelId(true)).toBe("app.lunabot.desktop");
     expect(windowsAppUserModelId(false)).toBe("app.lunabot.desktop.dev");

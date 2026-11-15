@@ -9,6 +9,15 @@ export function readAppVariant(value: string | undefined, isPackaged: boolean): 
 }
 
 /**
+ * Windows toast notifications keep a Start Menu shortcut named after the app and rewrite it to point at the running
+ * executable. The installer also opens the app through that shortcut after an update, so an unpackaged run sharing the
+ * name would leave it pointing at the bare Electron and the update would open Electron's welcome screen.
+ */
+export function applicationName(isPackaged: boolean): "Luna Bot" | "Luna Bot Dev" {
+  return isPackaged ? "Luna Bot" : "Luna Bot Dev";
+}
+
+/**
  * The Windows taskbar looks up a window's icon through the shortcut that carries the same AppUserModelID. The installer
  * writes the production id on its shortcuts, so an unpackaged run must use a different one, or its Electron shortcut
  * competes with the installed app's and the taskbar shows the Electron icon.
