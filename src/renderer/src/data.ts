@@ -68,6 +68,11 @@ export type ChatActionMarkerModel =
       kind: "approval-auto";
       label: string;
       timestamp: string;
+    }
+  | {
+      kind: "room-request";
+      label: string;
+      timestamp: string;
     };
 
 export interface MessageCitation {

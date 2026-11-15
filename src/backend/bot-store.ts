@@ -93,6 +93,7 @@ export class BotStore {
   readonly #botsRoot: string;
   readonly #sharedRoot: string;
   readonly #downloadsRoot: string;
+  readonly #roomsRoot: string;
   readonly #avatarsRoot: string;
   readonly #duplicationsRoot: string;
   readonly #database: LunaBotDatabase;
@@ -106,6 +107,7 @@ export class BotStore {
     this.#botsRoot = join(lunabotRoot, "Bots");
     this.#sharedRoot = join(lunabotRoot, "Shared");
     this.#downloadsRoot = join(lunabotRoot, "Downloads");
+    this.#roomsRoot = join(lunabotRoot, "Rooms");
     this.#avatarsRoot = join(userDataPath, "avatars", "agents");
     this.#duplicationsRoot = join(userDataPath, "agent-duplications");
     this.#database = database;
@@ -121,6 +123,10 @@ export class BotStore {
 
   get downloadsRoot(): string {
     return this.#downloadsRoot;
+  }
+
+  get roomsRoot(): string {
+    return this.#roomsRoot;
   }
 
   async initialize(): Promise<void> {
@@ -173,11 +179,12 @@ export class BotStore {
     return this.#state.bots.map((bot) => ({ ...bot }));
   }
 
-  createBot(input: Omit<CreateBotInput, "initialMessage">): Promise<BotSummary> {
-    return this.#enqueueCreation(() => this.#createBot(input));
+  // A caller may pre-allocate the id, so a room can record its membership before the bot exists.
+  createBot(input: Omit<CreateBotInput, "initialMessage">, botId: string = `bot-${randomUUID()}`): Promise<BotSummary> {
+    return this.#enqueueCreation(() => this.#createBot(input, botId));
   }
 
-  async #createBot(input: Omit<CreateBotInput, "initialMessage">): Promise<BotSummary> {
+  async #createBot(input: Omit<CreateBotInput, "initialMessage">, botId: string): Promise<BotSummary> {
     if (this.#state.bots.length >= INPUT_LIMITS.agents) {
       throw new Error(nativeMessage("errors.agent.limit", { max: String(INPUT_LIMITS.agents) }));
     }
@@ -189,7 +196,7 @@ export class BotStore {
     );
     if (!isAvatarSeed(input.avatarSeed)) throw new Error("Invalid avatar seed.");
     if (input.avatarHue !== null && !isAvatarHue(input.avatarHue)) throw new Error("Invalid avatar hue.");
-    const record = this.#createRecord(`bot-${randomUUID()}`, name, "", description);
+    const record = this.#createRecord(botId, name, "", description);
     record.avatarSeed = input.avatarSeed;
     record.avatarHue = input.avatarHue;
     await mkdir(record.workspacePath, { recursive: true, mode: 0o700 });
@@ -207,6 +214,51 @@ export class BotStore {
   duplicateBot(sourceId: string, operationId: string = randomUUID()): Promise<BotSummary> {
     if (!isUuidV4(operationId)) throw new Error("The copy operation id is malformed.");
     return this.#enqueueCreation(() => this.#duplicateBot(sourceId, operationId));
+  }
+
+  // Room copies carry profile fields and the avatar file only: a fresh workspace, no memories, routines, or files.
+  copyProfileIntoRoom(sourceId: string, copyId: string, name: string): Promise<BotSummary> {
+    return this.#enqueueCreation(() => this.#copyProfileIntoRoom(sourceId, copyId, name));
+  }
+
+  async #copyProfileIntoRoom(sourceId: string, copyId: string, name: string): Promise<BotSummary> {
+    if (this.#state.bots.length >= INPUT_LIMITS.agents) {
+      throw new Error(nativeMessage("errors.agent.limit", { max: String(INPUT_LIMITS.agents) }));
+    }
+    const source = this.#requireBot(sourceId);
+    const sourceAvatar = this.resolveAvatar(source.id);
+    const record = this.#createRecord(copyId, name, source.title, source.description);
+    record.notifications = source.notifications;
+    record.provider = source.provider;
+    record.model = source.model;
+    record.reasoningEffort = source.reasoningEffort;
+    record.avatarSeed = source.avatarSeed;
+    record.avatarHue = source.avatarHue;
+
+    const avatarDirectory = join(this.#avatarsRoot, record.id);
+    try {
+      await mkdir(record.workspacePath, { recursive: true, mode: 0o700 });
+      if (sourceAvatar) {
+        await mkdir(avatarDirectory, { recursive: true, mode: 0o700 });
+        const extension = avatarFileExtension(sourceAvatar.mimeType);
+        await copyFile(sourceAvatar.path, join(avatarDirectory, `${sourceAvatar.version}.${extension}`));
+        record.avatarUrl = agentAvatarUrl(record.id, sourceAvatar.version, sourceAvatar.mimeType);
+      }
+      this.#state.bots.unshift(record);
+      try {
+        this.#persist("agent.created");
+      } catch (error) {
+        this.#state.bots = this.#state.bots.filter((candidate) => candidate.id !== record.id);
+        throw error;
+      }
+      return { ...record };
+    } catch (error) {
+      await Promise.all([
+        rm(record.workspacePath, { recursive: true, force: true }),
+        rm(avatarDirectory, { recursive: true, force: true }),
+      ]);
+      throw error;
+    }
   }
 
   #enqueueCreation<T>(create: () => Promise<T>): Promise<T> {

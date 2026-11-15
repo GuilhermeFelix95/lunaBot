@@ -1,6 +1,7 @@
 import { conversationPtBR } from "./areas/conversation.pt-BR";
 import { miscPtBR } from "./areas/misc.pt-BR";
 import { onboardingPtBR } from "./areas/onboarding.pt-BR";
+import { roomsPtBR } from "./areas/rooms.pt-BR";
 import { settingsPtBR } from "./areas/settings.pt-BR";
 import { sidebarPtBR } from "./areas/sidebar.pt-BR";
 import type { MessageKey } from "./en";
@@ -10,6 +11,7 @@ export const ptBR: Partial<Record<MessageKey, string>> = {
   ...settingsPtBR,
   ...onboardingPtBR,
   ...sidebarPtBR,
+  ...roomsPtBR,
   ...conversationPtBR,
   ...miscPtBR,
   "settings.language.title": "Idioma",

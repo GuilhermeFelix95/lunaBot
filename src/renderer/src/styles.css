@@ -23,6 +23,7 @@
 @import "./styles/base.css";
 @import "./styles/auth.css";
 @import "./styles/first-bot-setup.css";
+@import "./styles/rooms.css";
 @import "./styles/avatar.css";
 @import "./styles/app-shell.css";
 @import "./styles/account-update-island.css";

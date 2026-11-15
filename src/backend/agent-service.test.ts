@@ -5,6 +5,7 @@ import { EventEmitter } from "node:events";
 import { chmod, mkdir, mkdtemp, readdir, readFile, realpath, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import type { McpServerConfig, ModelInfo } from "@anthropic-ai/claude-agent-sdk";
 import { serializeAttachmentReference } from "@lunabot/contracts/attachment-references";
 import { INPUT_LIMITS } from "@lunabot/contracts/input-limits";
 import {
@@ -19,6 +20,8 @@ import {
   routineRunConversationEvent,
 } from "@lunabot/contracts/ipc";
 import { type DynamicRecord, isDynamicRecord, isString } from "@lunabot/contracts/runtime-values";
+import { Client } from "@modelcontextprotocol/sdk/client/index.js";
+import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { canCreateSymlinks, removeDirectory, writeNodeExecutable } from "../test-utils/fs";
 import type { AgentClient, AgentProvider } from "./agent-client";
@@ -27,6 +30,7 @@ import { AgentRoutineStore } from "./agent-routine-store";
 import { AgentService } from "./agent-service";
 import { parseAgentExport, serializeAgentExport } from "./agent-transfer";
 import { BotStore } from "./bot-store";
+import { ClaudeAgentClient } from "./claude-client";
 import { MailboxStore } from "./mailbox-store";
 import {
   type AppServerNotification,
@@ -36,6 +40,7 @@ import {
   type ResponseDecoder,
   type RpcError,
 } from "./protocol";
+import { RoomService } from "./room-service";
 
 let root: string;
 let logPath: string;
@@ -3933,6 +3938,207 @@ describe.sequential("AgentService", () => {
     ).toHaveLength(1);
   });
 
+  it("keeps room members and general agents out of each other's tools and reach", async () => {
+    const clients = new Map<AgentProvider, FakeAgentClient>();
+    const { store, mailbox } = stores();
+    service = new AgentService(store, mailbox, fakeBrowser(), 30_000, "codex", (provider) => {
+      const client = new FakeAgentClient(provider, "", false);
+      clients.set(provider, client);
+      return client;
+    });
+    await service.initialize();
+    await store.getOrCreate("outsider-bot", "Outside Helper", "Outside title");
+    const rooms = new RoomService(store, service);
+    const room = await rooms.createRoom({
+      name: "Launch",
+      manager: {
+        name: "Room Lead",
+        description: "Coordinates the room.",
+        avatarSeed: "setup:room-lead",
+        avatarHue: 215,
+      },
+    });
+    const managerId = room.members[0]?.botId ?? "";
+    const copyId = await rooms.copyBotIntoRoom(room.id, "outsider-bot");
+    await service.sendMessage({ botId: managerId, text: "Start the launch." });
+    const generalReceipt = await service.sendMessage({ botId: "chief", text: "Ask the room." });
+    await waitFor(() => Boolean(store.activeProviderSession(managerId) && store.activeProviderSession("chief")));
+
+    const client = clients.get("codex");
+    const roomThread = store.activeProviderSession(managerId)?.externalSessionId;
+    const generalThread = store.activeProviderSession("chief")?.externalSessionId;
+    if (!client || !roomThread || !generalThread) throw new Error("The isolation test threads did not start.");
+
+    expect(service.listBots().map((bot) => bot.id)).not.toEqual(expect.arrayContaining([managerId, copyId]));
+    const roomList = JSON.stringify((await callLunaBotTool(client, roomThread, "list_agents", {})).result);
+    expect(roomList).toContain(copyId);
+    expect(roomList).not.toContain("outsider-bot");
+    const generalList = JSON.stringify((await callLunaBotTool(client, generalThread, "list_agents", {})).result);
+    expect(generalList).toContain("outsider-bot");
+    expect(generalList).not.toContain(managerId);
+    expect(generalList).not.toContain(copyId);
+
+    await expectLunaBotToolError(
+      client,
+      roomThread,
+      "send_message",
+      { recipientBotIds: ["outsider-bot"], text: "Hi" },
+      "Unknown Luna Bot agent: outsider-bot",
+    );
+    await expectLunaBotToolError(
+      client,
+      roomThread,
+      "update_profile",
+      { botId: "outsider-bot", name: "Changed" },
+      "Unknown bot: outsider-bot",
+    );
+    await expectLunaBotToolError(
+      client,
+      generalThread,
+      "send_message",
+      { recipientBotIds: [managerId], text: "Hi" },
+      `Unknown Luna Bot agent: ${managerId}`,
+    );
+
+    // Only the manager's thread is offered the room tools. A member or general agent gets them refused.
+    const roomMembers = await callLunaBotTool(
+      client,
+      roomThread,
+      "room_members",
+      {},
+      "room-tool-turn",
+      randomUUID(),
+      "lunabot_room",
+    );
+    expect(JSON.stringify(roomMembers.result)).toContain(copyId);
+    const generalRoomTool = await callLunaBotTool(
+      client,
+      generalThread,
+      "room_members",
+      {},
+      "room-tool-turn",
+      randomUUID(),
+      "lunabot_room",
+    );
+    expect(generalRoomTool.error?.message).toContain("Only the active room manager");
+    const starts = client.requests.filter((request) => request.method === "thread/start");
+    const managerStart = starts.find((request) =>
+      JSON.stringify(request.params).includes("You are the manager of a closed room"),
+    );
+    expect(JSON.stringify(managerStart?.params)).toContain('"name":"lunabot_room"');
+    for (const start of starts.filter((request) => request !== managerStart)) {
+      expect(JSON.stringify(start.params)).not.toContain("lunabot_room");
+    }
+    await expectLunaBotToolError(
+      client,
+      roomThread,
+      "send_message",
+      { recipientBotIds: [copyId], text: "Reply", replyToMessageId: generalReceipt.messageId },
+      `Unknown message: ${generalReceipt.messageId}`,
+    );
+  });
+
+  it("offers room tools only to the active room manager's Claude thread and records the hire request", async () => {
+    process.env.LUNABOT_CLAUDE_PATH = await createFakeClaude(root);
+    const { store, mailbox } = stores();
+    const claudeQueries: Array<Record<string, McpServerConfig>> = [];
+    const agents = new AgentService(store, mailbox, fakeBrowser(), 30_000, "claude", (provider, cli) => {
+      if (provider !== "claude") return new FakeAgentClient(provider, "", false);
+      return new ClaudeAgentClient(cli, (params) => {
+        claudeQueries.push(params.options?.mcpServers ?? {});
+        return new PendingClaudeQuery();
+      });
+    });
+    service = agents;
+    await agents.initialize();
+    await waitFor(() => agents.availableProviders().includes("claude"));
+    await store.getOrCreate("outsider-bot", "Outside Helper", "Outside title");
+    await store.getOrCreate("spare-bot", "Spare Helper", "Spare title");
+    const rooms = new RoomService(store, agents);
+    let changes = 0;
+    rooms.on("changed", () => {
+      changes += 1;
+    });
+    const room = await rooms.createRoom({
+      name: "Launch",
+      manager: {
+        name: "Room Lead",
+        description: "Coordinates the room.",
+        avatarSeed: "setup:room-lead",
+        avatarHue: 215,
+      },
+    });
+    const managerId = room.members[0]?.botId ?? "";
+    const memberId = await rooms.copyBotIntoRoom(room.id, "outsider-bot");
+    await agents.sendMessage({ botId: managerId, text: "Start the launch." });
+    await agents.sendMessage({ botId: memberId, text: "Hello." });
+    await waitFor(() => Boolean(store.activeProviderSession(managerId) && store.activeProviderSession(memberId)));
+
+    expect(claudeQueries).toHaveLength(2);
+    const withRoomTools = claudeQueries.filter((servers) => "lunabot_room" in servers);
+    expect(withRoomTools).toHaveLength(1);
+    const roomServer = withRoomTools[0]?.lunabot_room;
+    if (roomServer?.type !== "sdk") throw new Error("The room manager's Claude thread has no room tool server.");
+
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+    await roomServer.instance.connect(serverTransport);
+    const toolClient = new Client({ name: "room-manager-test", version: "0.1.0" });
+    await toolClient.connect(clientTransport);
+    const changesBefore = changes;
+    const hire = await toolClient.callTool({
+      name: "request_hire",
+      arguments: { botId: "spare-bot", reason: "The launch needs copy." },
+    });
+    await toolClient.close();
+
+    expect(hire.isError).not.toBe(true);
+    expect(rooms.getRoom(room.id).requests).toEqual(
+      expect.arrayContaining([expect.objectContaining({ kind: "hire", status: "pending", targetBotId: "spare-bot" })]),
+    );
+    expect(changes).toBeGreaterThan(changesBefore);
+  });
+
+  it("runs a real room manager turn with the default model, and keeps its messages out of general search", async () => {
+    const { store, mailbox } = stores();
+    service = new AgentService(
+      store,
+      mailbox,
+      fakeBrowser(),
+      30_000,
+      "codex",
+      (provider) => new FakeAgentClient(provider),
+    );
+    await service.initialize();
+    const rooms = new RoomService(store, service);
+    const room = await rooms.createRoom({
+      name: "Launch",
+      manager: {
+        name: "Room Lead",
+        description: "Coordinates the room.",
+        avatarSeed: "setup:room-lead",
+        avatarHue: 215,
+      },
+    });
+    const managerId = room.members.find((member) => member.role === "manager")?.botId ?? "";
+    expect(store.list().find((bot) => bot.id === managerId)).toMatchObject({
+      provider: "codex",
+      model: "gpt-5.6-luna",
+    });
+
+    await service.sendMessage({ botId: managerId, text: "Plan the room." });
+    await service.sendMessage({ botId: "chief", text: "Plan the general work." });
+    await waitFor(async () => {
+      const managerText = JSON.stringify((await service?.readConversation(managerId))?.messages ?? []);
+      const chiefText = JSON.stringify((await service?.readConversation("chief"))?.messages ?? []);
+      return managerText.includes("CODEX_DONE") && chiefText.includes("CODEX_DONE");
+    });
+
+    const search = service.searchConversationMessages("CODEX_DONE");
+    const foundBotIds = search.results.map((result) => result.botId);
+    expect(foundBotIds).toContain("chief");
+    expect(foundBotIds).not.toContain(managerId);
+  });
+
   it("sends a teammate request only to the selected profile match", async () => {
     process.env.LUNABOT_FAKE_AGENT_TOOL_CALLS = JSON.stringify([
       { tool: "list_agents", arguments: {} },
@@ -4615,6 +4821,7 @@ async function callLunaBotTool(
   args: unknown,
   turnId = "routine-tool-turn",
   callId: string = randomUUID(),
+  namespace = "lunabot",
 ): Promise<{ result?: unknown; error?: RpcError }> {
   const id = `lunabot-tool-${randomUUID()}`;
   client.emit("request", {
@@ -4624,7 +4831,7 @@ async function callLunaBotTool(
       threadId,
       turnId,
       callId,
-      namespace: "lunabot",
+      namespace,
       tool,
       arguments: args,
     },
@@ -4700,6 +4907,7 @@ function fakeBrowser(tabs: BrowserTab[] = []) {
     endControl: () => undefined,
     listTabs: () => tabs,
     handleDynamicTool: async (_params: DynamicToolCallParams) => ({ success: true, contentItems: [] }),
+    clearRoomBrowserData: async (_roomId: string) => undefined,
   };
 }
 
@@ -4919,6 +5127,53 @@ process.stdin.on("data", (chunk) => {
 `,
     "cjs",
   );
+}
+
+// Yields nothing, so the Claude turn stays open until the service stops it. close() ends the stream.
+class PendingClaudeQuery {
+  #closed = false;
+  readonly #waiters: Array<() => void> = [];
+
+  [Symbol.asyncIterator](): AsyncIterator<never> {
+    return {
+      next: () =>
+        this.#closed
+          ? Promise.resolve<IteratorResult<never>>({ done: true, value: undefined })
+          : new Promise<IteratorResult<never>>((resolve) => {
+              this.#waiters.push(() => resolve({ done: true, value: undefined }));
+            }),
+    };
+  }
+
+  async interrupt(): Promise<undefined> {
+    return undefined;
+  }
+
+  async supportedModels(): Promise<ModelInfo[]> {
+    return [
+      {
+        value: "claude-haiku-5-5",
+        resolvedModel: "claude-haiku-5-5",
+        displayName: "Haiku 5.5",
+        description: "Fast",
+        supportsEffort: false,
+        supportedEffortLevels: [],
+      },
+    ];
+  }
+
+  async setModel(_model?: string): Promise<undefined> {
+    return undefined;
+  }
+
+  async applyFlagSettings(_settings: unknown): Promise<undefined> {
+    return undefined;
+  }
+
+  close(): void {
+    this.#closed = true;
+    for (const wake of this.#waiters.splice(0)) wake();
+  }
 }
 
 async function createFakeClaude(directory: string): Promise<string> {

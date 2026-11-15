@@ -3,11 +3,14 @@ import type {
   ConversationMessage,
   ConversationReadState,
   QueueDeliveryStatus,
+  RoomRequestNotice,
 } from "@lunabot/contracts/ipc";
 import {
   isApprovalAutoMarker,
   isRoutineRunConversationEventMarker,
+  ROOM_REQUEST_NOTICE_ITEM_TYPE_PREFIX,
   ROUTINE_EVENT_ITEM_TYPE_PREFIX,
+  roomRequestNoticeConversationEvent,
   routineConversationEvent,
   routineRunConversationEvent,
 } from "@lunabot/contracts/ipc";
@@ -131,6 +134,7 @@ export function readStateForMessages(
         message.itemType !== "commentary" &&
         message.itemType !== "agent_attachment" &&
         !message.itemType?.startsWith(ROUTINE_EVENT_ITEM_TYPE_PREFIX) &&
+        !message.itemType?.startsWith(ROOM_REQUEST_NOTICE_ITEM_TYPE_PREFIX) &&
         !isRoutineRunConversationEventMarker(message.itemType) &&
         !isApprovalAutoMarker(message.itemType),
     );
@@ -254,7 +258,26 @@ function chatActionMarker(
   if (isApprovalAutoMarker(message.itemType)) {
     return { kind: "approval-auto", label: t("conversation.marker.approvalAuto"), timestamp: message.createdAt };
   }
+  const roomRequestNotice = roomRequestNoticeConversationEvent(message);
+  if (roomRequestNotice) {
+    return {
+      kind: "room-request",
+      label: roomRequestNoticeLabel(roomRequestNotice),
+      timestamp: message.createdAt,
+    };
+  }
   return null;
+}
+
+function roomRequestNoticeLabel({ decision, requestKind, name }: RoomRequestNotice): string {
+  const approved = decision === "approve";
+  if (requestKind === "hire") {
+    return approved ? t("rooms.notice.hireApproved", { name }) : t("rooms.notice.hireDeclined", { name });
+  }
+  if (requestKind === "dismiss") {
+    return approved ? t("rooms.notice.dismissApproved", { name }) : t("rooms.notice.dismissDeclined", { name });
+  }
+  return approved ? t("rooms.notice.newBotApproved", { name }) : t("rooms.notice.newBotDeclined", { name });
 }
 
 function aggregateDeliveryStatus(statuses: QueueDeliveryStatus[]): AgentDeliveryMarkerStatus {

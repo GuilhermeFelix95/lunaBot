@@ -171,10 +171,12 @@ export class UpdateService extends EventEmitter<UpdateServiceEvents> {
     if (this.#started) return;
     this.#started = true;
     // The automatic download is driven from this service so that both flows share one download path
-    // and one cancellation token. autoInstallOnAppQuit stays off so nothing installs without the
-    // explicit restart action, which is the only path that runs shutdown preparation.
+    // and one cancellation token. On macOS autoInstallOnAppQuit stays off so nothing installs without the
+    // explicit restart action, which is the only path that runs shutdown preparation. On Windows and Linux
+    // a downloaded update installs when the app quits, so closing the app or shutting the computer down
+    // after the download does not leave the user on the old version with the update thrown away.
     this.#updater.autoDownload = false;
-    this.#updater.autoInstallOnAppQuit = false;
+    this.#updater.autoInstallOnAppQuit = this.#options.platform !== "darwin";
     this.#updater.allowPrerelease = false;
 
     // The check lifecycle is driven entirely by checkForUpdates(), whose result is generation

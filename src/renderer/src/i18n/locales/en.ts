@@ -1,6 +1,7 @@
 import { conversationEn } from "./areas/conversation.en";
 import { miscEn } from "./areas/misc.en";
 import { onboardingEn } from "./areas/onboarding.en";
+import { roomsEn } from "./areas/rooms.en";
 import { settingsEn } from "./areas/settings.en";
 import { sidebarEn } from "./areas/sidebar.en";
 
@@ -8,6 +9,7 @@ export const en = {
   ...settingsEn,
   ...onboardingEn,
   ...sidebarEn,
+  ...roomsEn,
   ...conversationEn,
   ...miscEn,
   "settings.language.title": "Language",

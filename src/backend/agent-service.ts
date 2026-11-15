@@ -55,6 +55,8 @@ import type {
   RespondToApprovalInput,
   RespondToBrowserTakeoverInput,
   RespondToPromptInput,
+  RoomBackstageMessage,
+  RoomRequestNotice,
   Routine,
   RoutineConversationEventAction,
   RoutineRun,
@@ -87,6 +89,7 @@ import {
   isRoutineSchedule,
   MESSAGE_PIN_TEXT_LIMIT,
   MESSAGE_PINS_LIMIT,
+  roomRequestNoticeItemType,
   routineConversationEventItemType,
   routineRunConversationEventItemType,
 } from "@lunabot/contracts/ipc";
@@ -118,6 +121,7 @@ import {
   snapshotFromThread,
   sortConversationMessages,
 } from "./conversation-snapshots";
+import { LUNABOT_ROOM_DYNAMIC_TOOLS, LUNABOT_ROOM_NAMESPACE } from "./lunabot-room-tools";
 import { LUNABOT_DYNAMIC_TOOLS } from "./lunabot-tools";
 import type { DeliveryContext, GeneratedAttachmentSource, MailboxStore } from "./mailbox-store";
 import {
@@ -146,6 +150,8 @@ import {
   type ThreadItem,
 } from "./protocol";
 import { BUILT_IN_PROVIDER_DRIVERS, requireProviderDriver } from "./provider-drivers";
+import { ROOM_MANAGER_INSTRUCTIONS, roomRequestNoticeMessage } from "./room-manager-instructions";
+import { type BotScope, botScope, canReachBot, sharedRootForScope } from "./room-scope";
 import { nextRoutineOccurrence } from "./routine-schedule";
 import { isWithin, sharedPathFromInput, workspacePathFromInput } from "./workspace-paths";
 
@@ -166,6 +172,7 @@ interface AgentBrowserHost {
   endControl(threadId: string, turnId: string): void;
   listTabs(): BrowserTab[];
   handleDynamicTool(params: DynamicToolCallParams): Promise<DynamicToolResult>;
+  clearRoomBrowserData(roomId: string): Promise<void>;
 }
 
 interface PendingPrompt {
@@ -361,6 +368,11 @@ const CURATED_CLAUDE_MODEL_IDS = new Set(
 
 export type AgentClientFactory = (provider: AgentProvider, cli: AgentCliInfo) => AgentClient;
 
+// Implemented by RoomService. Kept as an interface so AgentService does not import the room service at runtime.
+export interface RoomManagerTools {
+  managerTool(botId: string, tool: string, args: unknown): unknown;
+}
+
 export class AgentService extends EventEmitter<AgentServiceEvents> {
   readonly #store: BotStore;
   readonly #mailbox: MailboxStore;
@@ -401,6 +413,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
   readonly #pendingRuntimeRefreshes = new Set<string>();
   readonly #duplicatingBots = new Set<string>();
   readonly #pendingDuplicateBots = new Set<string>();
+  #roomManagerTools: RoomManagerTools | null = null;
   readonly #pendingDuplicateOperations = new Map<string, { operationId: string; sourceBotId: string }>();
   readonly #pendingDuplicateReleases = new Map<string, () => void>();
   readonly #pendingDeltas = new Map<string, PendingDelta>();
@@ -475,8 +488,18 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     return client ? this.#refreshUsage(client) : { limits: [] };
   }
 
+  // General listings (sidebar, search, list_agents) hide room members. Internal lookups use #knownBots.
   listBots(): BotSummary[] {
+    const roomMemberIds = this.#store.database.roomMemberBotIds();
+    return this.#knownBots().filter((bot) => !roomMemberIds.has(bot.id));
+  }
+
+  #knownBots(): BotSummary[] {
     return this.#store.list().filter((bot) => !this.#pendingDuplicateBots.has(bot.id));
+  }
+
+  publishBotsChanged(): void {
+    this.#emit({ type: "bots-changed", bots: this.listBots() });
   }
 
   getRuntimeSnapshot(): AgentRuntimeSnapshot {
@@ -493,7 +516,8 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     }));
     const activeTurns: AgentRuntimeSnapshot["activeTurns"] = [];
     const latestMessages: AgentRuntimeSnapshot["latestMessages"] = [];
-    for (const bot of bots) {
+    // Room members are missing from bots, but their turns and latest messages still belong in the runtime state.
+    for (const bot of this.#knownBots()) {
       const live = this.#snapshots.get(bot.id);
       const liveLatest = [...(live?.messages ?? [])]
         .reverse()
@@ -760,6 +784,17 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     return structuredClone(this.#models);
   }
 
+  preferredProvider(): AgentProvider {
+    return this.#preferredProvider;
+  }
+
+  // Providers whose client is connected now. Same state the status reports as "available".
+  availableProviders(): AgentProvider[] {
+    return (this.#status.providers ?? [])
+      .filter((provider) => provider.state === "available")
+      .map((provider) => provider.id);
+  }
+
   async createBot(input: CreateBotInput): Promise<BotSummary> {
     const initialMessage = input.initialMessage.trim();
     if (!initialMessage) throw new Error(nativeMessage("errors.agent.initialMessageRequired"));
@@ -807,8 +842,11 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     }
   }
 
-  async createBotProfile(input: Omit<CreateBotInput, "initialMessage"> & { title?: string }): Promise<BotSummary> {
-    let bot = await this.#store.createBot(input);
+  async createBotProfile(
+    input: Omit<CreateBotInput, "initialMessage"> & { title?: string },
+    botId?: string,
+  ): Promise<BotSummary> {
+    let bot = await this.#store.createBot(input, botId);
     try {
       await this.#prepareBotWorkspace(bot);
       if (input.title) bot = await this.#store.updateBot({ botId: bot.id, title: input.title });
@@ -816,6 +854,18 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       return bot;
     } catch (error) {
       await this.#deleteBotData(bot);
+      throw error;
+    }
+  }
+
+  // Room copies get a fresh workspace and profile fields only; they are hidden from general listings once a room claims them.
+  async copyBotProfileIntoRoom(sourceBotId: string, copyId: string, name: string): Promise<BotSummary> {
+    const copy = await this.#store.copyProfileIntoRoom(sourceBotId, copyId, name);
+    try {
+      await this.#prepareBotWorkspace(copy);
+      return copy;
+    } catch (error) {
+      await this.#deleteBotData(copy);
       throw error;
     }
   }
@@ -1033,10 +1083,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
   async deleteBot(botId: string): Promise<void> {
     const bot = this.#store.list().find((candidate) => candidate.id === botId);
     if (!bot) throw new Error(`Unknown bot: ${botId}`);
-    const hasPendingWork = this.#mailbox
-      .listQueue(botId)
-      .deliveries.some((delivery) => ["queued", "starting", "running"].includes(delivery.status));
-    if (hasPendingWork || this.#snapshots.get(botId)?.activeTurnId) {
+    if (this.#hasTurnWork(botId)) {
       throw new Error(nativeMessage("errors.agent.deleteBusy"));
     }
 
@@ -1297,8 +1344,9 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
   }
 
   async readConversation(botId: string): Promise<ConversationSnapshot> {
-    const bot = await this.#store.getOrCreate(botId);
-    const persisted = this.#store.database.readConversation(botId, bot.threadId);
+    // Reads never create a bot: a deleted bot has no thread, so a late read gets an empty conversation.
+    const threadId = this.#knownBots().find((candidate) => candidate.id === botId)?.threadId ?? null;
+    const persisted = this.#store.database.readConversation(botId, threadId);
     const live = this.#snapshots.get(botId);
     const snapshot = live?.activeTurnId ? mergeConversationSnapshots(persisted, live) : persisted;
     this.#syncMailboxMessages(snapshot);
@@ -1321,12 +1369,14 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     limit = 50,
     options: ConversationMarkerExclusions = {},
   ): Promise<ConversationPage> {
-    const bot = await this.#store.getOrCreate(botId);
-    this.#reconcilePersistedMailboxMessages(bot);
-    const page = this.#store.database.readConversationPage(botId, bot.threadId, anchor, limit, options);
+    // Reads never create a bot: a deleted bot has no thread, so a late read gets an empty page.
+    const bot = this.#knownBots().find((candidate) => candidate.id === botId);
+    if (bot) this.#reconcilePersistedMailboxMessages(bot);
+    const threadId = bot?.threadId ?? null;
+    const page = this.#store.database.readConversationPage(botId, threadId, anchor, limit, options);
     return {
       ...page,
-      readState: this.#conversationReads.readStateForThread(memberId, bot.threadId, options),
+      readState: this.#conversationReads.readStateForThread(memberId, threadId, options),
     };
   }
 
@@ -1380,6 +1430,43 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
   async cancelQueuedMessage(botId: string, deliveryId: string): Promise<void> {
     await this.#mailbox.cancel(botId, deliveryId);
     this.#emitQueue(botId);
+  }
+
+  // Dismissal: drop queued deliveries and interrupt the running turn. Conversation history is kept.
+  async stopBot(botId: string): Promise<void> {
+    for (const delivery of this.#mailbox.listQueue(botId).deliveries) {
+      if (delivery.status === "queued") await this.#mailbox.cancel(botId, delivery.id);
+    }
+    this.#emitQueue(botId);
+    const turnId = this.#snapshots.get(botId)?.activeTurnId;
+    if (turnId) await this.interrupt(botId, turnId);
+  }
+
+  // Resolves true once none of the bots has a queued, starting, or running turn, or false when the timeout passes first.
+  async waitUntilIdle(botIds: readonly string[], timeoutMs: number): Promise<boolean> {
+    const deadline = Date.now() + timeoutMs;
+    while (botIds.some((botId) => this.#hasTurnWork(botId))) {
+      if (Date.now() >= deadline) return false;
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+    return true;
+  }
+
+  clearRoomBrowserData(roomId: string): Promise<void> {
+    return this.#browser.clearRoomBrowserData(roomId);
+  }
+
+  roomMessages(botIds: ReadonlySet<string>): Omit<RoomBackstageMessage, "authorName">[] {
+    return this.#mailbox.roomMessages(botIds);
+  }
+
+  #hasTurnWork(botId: string): boolean {
+    return (
+      this.#mailbox
+        .listQueue(botId)
+        .deliveries.some((delivery) => ["queued", "starting", "running"].includes(delivery.status)) ||
+      Boolean(this.#snapshots.get(botId)?.activeTurnId)
+    );
   }
 
   async updateQueuedMessage(input: UpdateQueuedMessageInput): Promise<void> {
@@ -1472,6 +1559,25 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     }
     this.#scheduleDrain(bot.id);
     return receipt;
+  }
+
+  // Tells the room manager how the user answered one of its requests. It is a system note, not a message from the user.
+  async deliverRoomRequestNotice(input: {
+    botId: string;
+    notice: RoomRequestNotice;
+    idempotencyKey: string;
+  }): Promise<void> {
+    await this.#mailbox.enqueue({
+      sender: { kind: "system", notice: input.notice },
+      recipientBotIds: [input.botId],
+      text: input.notice.name,
+      idempotencyKey: input.idempotencyKey,
+    });
+    this.#emitQueue(input.botId);
+    this.#scheduleDrain(input.botId);
+    const snapshot = this.#ensureSnapshot(input.botId, null);
+    this.#syncMailboxMessages(snapshot);
+    this.#emitConversation(snapshot);
   }
 
   async setMessageReaction(input: SetMessageReactionInput): Promise<void> {
@@ -2396,23 +2502,21 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       return session.externalSessionId;
     }
 
+    const scope = this.#scopeOf(currentBot.id);
+    const sharedRoot = sharedRootForScope(scope, this.#store.sharedRoot, this.#store.roomsRoot);
     const response = await client.request(
       "thread/start",
       {
         model: currentBot.model,
         effort: currentBot.reasoningEffort,
         cwd: currentBot.workspacePath,
-        runtimeWorkspaceRoots: [currentBot.workspacePath, this.#store.sharedRoot],
+        runtimeWorkspaceRoots: [currentBot.workspacePath, sharedRoot],
         approvalPolicy: "on-request",
         sandbox: "danger-full-access",
-        developerInstructions: developerInstructions(
-          currentBot,
-          this.#store.sharedRoot,
-          this.#memories.list(currentBot.id),
-        ),
+        developerInstructions: developerInstructions(currentBot, sharedRoot, this.#memories.list(currentBot.id), scope),
         ephemeral: false,
         serviceName: "lunabot",
-        dynamicTools: [...BROWSER_DYNAMIC_TOOLS, LUNABOT_DYNAMIC_TOOLS],
+        dynamicTools: this.#dynamicToolsFor(currentBot.id),
       },
       decodeThreadResponse,
     );
@@ -2427,16 +2531,18 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
   }
 
   async #resumeThread(bot: BotSummary, client: AgentClient, externalThreadId: string): Promise<void> {
+    const scope = this.#scopeOf(bot.id);
+    const sharedRoot = sharedRootForScope(scope, this.#store.sharedRoot, this.#store.roomsRoot);
     const params = {
       threadId: externalThreadId,
       model: bot.model,
       effort: bot.reasoningEffort,
       cwd: bot.workspacePath,
-      runtimeWorkspaceRoots: [bot.workspacePath, this.#store.sharedRoot],
+      runtimeWorkspaceRoots: [bot.workspacePath, sharedRoot],
       approvalPolicy: "on-request",
       sandbox: "danger-full-access",
-      developerInstructions: developerInstructions(bot, this.#store.sharedRoot, this.#memories.list(bot.id)),
-      dynamicTools: [...BROWSER_DYNAMIC_TOOLS, LUNABOT_DYNAMIC_TOOLS],
+      developerInstructions: developerInstructions(bot, sharedRoot, this.#memories.list(bot.id), scope),
+      dynamicTools: this.#dynamicToolsFor(bot.id),
     };
 
     try {
@@ -2510,6 +2616,10 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
             client.respond(request.id, await this.#handleLunaBotTool(request.params));
             return;
           }
+          if (request.params.namespace === LUNABOT_ROOM_NAMESPACE) {
+            client.respond(request.id, this.#handleRoomManagerTool(request.params));
+            return;
+          }
           throw new Error(`Unsupported dynamic tool namespace: ${request.params.namespace}`);
         }
         case "item/tool/requestUserInput":
@@ -2537,6 +2647,23 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       }
       this.#emitError("server_request_failed", error);
     }
+  }
+
+  #dynamicToolsFor(botId: string) {
+    const scope = this.#scopeOf(botId);
+    const roomManager = scope.kind === "room" && scope.active && scope.role === "manager";
+    return [...BROWSER_DYNAMIC_TOOLS, LUNABOT_DYNAMIC_TOOLS, ...(roomManager ? [LUNABOT_ROOM_DYNAMIC_TOOLS] : [])];
+  }
+
+  #handleRoomManagerTool(params: DynamicToolCallParams) {
+    const senderBotId = this.#threadToBot.get(params.threadId);
+    if (!senderBotId) throw new Error("The sending Luna Bot agent is unknown.");
+    if (!this.#roomManagerTools) throw new Error("Room tools are not available.");
+    return openLunaBotToolResult(this.#roomManagerTools.managerTool(senderBotId, params.tool, params.arguments));
+  }
+
+  attachRoomManagerTools(tools: RoomManagerTools): void {
+    this.#roomManagerTools = tools;
   }
 
   async #handleLunaBotTool(params: DynamicToolCallParams): Promise<LunaBotToolResponse> {
@@ -2571,7 +2698,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     }
 
     if (params.tool === "list_agents") {
-      const agents = this.listBots().map((bot) => {
+      const agents = this.#reachableBots(senderBotId).map((bot) => {
         const queue = this.#mailbox.listQueue(bot.id);
         return {
           id: bot.id,
@@ -2606,6 +2733,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         if (value !== undefined && !isString(value)) throw new Error(`${field} must be a string.`);
         if (value !== undefined) input[field] = value;
       }
+      this.#assertReachable(senderBotId, botId);
       const updated = await this.updateBot(input);
       return {
         success: true,
@@ -2625,7 +2753,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
 
     if (params.tool === "list_routines") {
       const args = routineToolArguments(params.arguments, ["botId"]);
-      const botId = routineToolBotId(args, senderBotId);
+      const botId = this.#routineTargetBotId(args, senderBotId);
       return openLunaBotToolResult({ routines: this.listRoutines(botId) });
     }
 
@@ -2638,7 +2766,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         "active",
         "timezone",
       ]);
-      const botId = routineToolBotId(args, senderBotId);
+      const botId = this.#routineTargetBotId(args, senderBotId);
       const active = args.active === undefined ? true : args.active;
       if (!isBoolean(active)) throw new Error("The active flag must be true or false.");
       const timezone =
@@ -2674,7 +2802,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         "active",
       ]);
       const input: UpdateRoutineInput = {
-        botId: routineToolBotId(args, senderBotId),
+        botId: this.#routineTargetBotId(args, senderBotId),
         routineId: routineToolString(args.routineId, "routineId", INPUT_LIMITS.identifier, "routineId is required."),
       };
       let hasUpdate = false;
@@ -2708,7 +2836,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
 
     if (params.tool === "delete_routine") {
       const args = routineToolArguments(params.arguments, ["botId", "routineId"]);
-      const botId = routineToolBotId(args, senderBotId);
+      const botId = this.#routineTargetBotId(args, senderBotId);
       const routineId = routineToolString(
         args.routineId,
         "routineId",
@@ -2721,7 +2849,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
 
     if (params.tool === "test_routine") {
       const args = routineToolArguments(params.arguments, ["botId", "routineId"]);
-      const botId = routineToolBotId(args, senderBotId);
+      const botId = this.#routineTargetBotId(args, senderBotId);
       const routineId = routineToolString(
         args.routineId,
         "routineId",
@@ -2825,7 +2953,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       throw new Error("Each recipient can be listed only once.");
     }
     if (recipientValues.includes(senderBotId)) throw new Error("Agents can't address messages to themselves.");
-    const knownIds = new Set(this.listBots().map((bot) => bot.id));
+    const knownIds = new Set(this.#reachableBots(senderBotId).map((bot) => bot.id));
     for (const recipient of recipientValues) {
       if (!knownIds.has(recipient)) throw new Error(`Unknown Luna Bot agent: ${recipient}`);
     }
@@ -2836,6 +2964,13 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     const replyToMessageId = params.arguments.replyToMessageId;
     if (replyToMessageId !== undefined && replyToMessageId !== null && !isString(replyToMessageId)) {
       throw new Error("replyToMessageId has to hold a valid message id.");
+    }
+    // A reply can only point at a message this agent took part in, so a room bot can't quote a conversation it isn't in.
+    if (
+      isString(replyToMessageId) &&
+      !this.#mailbox.conversationMessages(senderBotId).some((message) => message.id === replyToMessageId)
+    ) {
+      throw new Error(`Unknown message: ${replyToMessageId}`);
     }
     if (!isString(params.arguments.text)) throw new Error("text is required.");
 
@@ -2957,10 +3092,8 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
   async #openAgentAttachmentSource(botId: string, inputPath: string): Promise<GeneratedAttachmentSource> {
     const bot = this.#requireKnownBot(botId);
     const value = inputPath.trim();
-    const [workspaceRoot, sharedRoot] = await Promise.all([
-      realpath(bot.workspacePath),
-      realpath(this.#store.sharedRoot),
-    ]);
+    const scopedSharedRoot = this.#sharedRootFor(bot.id);
+    const [workspaceRoot, sharedRoot] = await Promise.all([realpath(bot.workspacePath), realpath(scopedSharedRoot)]);
     const normalized = value.replaceAll("\\", "/");
     const sharedReference = ["~/LunaBot/Shared/", "LunaBot/Shared/", "Shared/"].some((prefix) =>
       normalized.startsWith(prefix),
@@ -2968,11 +3101,8 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     const candidates = isAbsolute(value)
       ? [value]
       : sharedReference
-        ? [sharedPathFromInput(this.#store.sharedRoot, value)]
-        : [
-            workspacePathFromInput(bot.workspacePath, bot.id, value),
-            sharedPathFromInput(this.#store.sharedRoot, value),
-          ];
+        ? [sharedPathFromInput(scopedSharedRoot, value)]
+        : [workspacePathFromInput(bot.workspacePath, bot.id, value), sharedPathFromInput(scopedSharedRoot, value)];
 
     for (const candidate of candidates) {
       try {
@@ -3168,6 +3298,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
           displayText,
         ].join("\n");
       }
+      if (delivery.sender.kind === "system") text = roomRequestNoticeMessage(delivery.sender.notice);
       if (managedAttachments.length) {
         text += `\n\nAttached local files:\n${managedAttachments.map((item) => `- ${item.name}: ${item.path}`).join("\n")}`;
       }
@@ -3187,8 +3318,9 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       if (!snapshot.messages.some((message) => message.id === delivery.id)) {
         snapshot.messages.push({
           id: delivery.id,
-          author: delivery.sender.kind === "bot" ? "agent" : "user",
-          source: delivery.sender.kind === "bot" ? "agent" : "user",
+          author: delivery.sender.kind === "bot" ? "agent" : delivery.sender.kind === "system" ? "system" : "user",
+          source: delivery.sender.kind === "bot" ? "agent" : delivery.sender.kind === "system" ? "system" : "user",
+          itemType: delivery.sender.kind === "system" ? roomRequestNoticeItemType(delivery.sender.notice) : undefined,
           senderBotId: delivery.sender.kind === "bot" ? delivery.sender.botId : undefined,
           replyToMessageId: delivery.replyToMessageId,
           attachments: delivery.attachments,
@@ -3211,7 +3343,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
           clientUserMessageId: delivery.id,
           input,
           cwd: bot.workspacePath,
-          runtimeWorkspaceRoots: [bot.workspacePath, this.#store.sharedRoot],
+          runtimeWorkspaceRoots: [bot.workspacePath, this.#sharedRootFor(bot.id)],
           approvalPolicy: "on-request",
           sandboxPolicy: { type: "dangerFullAccess" },
         },
@@ -4788,9 +4920,34 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
   }
 
   #requireKnownBot(botId: string): BotSummary {
-    const bot = this.listBots().find((candidate) => candidate.id === botId);
+    const bot = this.#knownBots().find((candidate) => candidate.id === botId);
     if (!bot) throw new Error(`Unknown bot: ${botId}`);
     return bot;
+  }
+
+  #scopeOf(botId: string): BotScope {
+    return botScope(botId, this.#store.database.roomMemberships());
+  }
+
+  #sharedRootFor(botId: string): string {
+    return sharedRootForScope(this.#scopeOf(botId), this.#store.sharedRoot, this.#store.roomsRoot);
+  }
+
+  #reachableBots(senderBotId: string): BotSummary[] {
+    const memberships = this.#store.database.roomMemberships();
+    const scope = botScope(senderBotId, memberships);
+    return this.#knownBots().filter((bot) => canReachBot(scope, bot.id, memberships));
+  }
+
+  // Out-of-scope and nonexistent bots fail with the same message so a room bot cannot probe other rooms.
+  #assertReachable(senderBotId: string, botId: string): void {
+    if (!this.#reachableBots(senderBotId).some((bot) => bot.id === botId)) throw new Error(`Unknown bot: ${botId}`);
+  }
+
+  #routineTargetBotId(args: DynamicRecord, senderBotId: string): string {
+    const botId = routineToolBotId(args, senderBotId);
+    this.#assertReachable(senderBotId, botId);
+    return botId;
   }
 
   #memoryStateChanged(botId: string): void {
@@ -5246,7 +5403,7 @@ function finiteNumberOrNull(value: unknown): number | null {
   return isNumber(value) && Number.isFinite(value) ? value : null;
 }
 
-function developerInstructions(bot: BotSummary, sharedRoot: string, memories: BotMemory[]): string {
+function developerInstructions(bot: BotSummary, sharedRoot: string, memories: BotMemory[], scope: BotScope): string {
   const profile = JSON.stringify(
     {
       id: bot.id,
@@ -5275,14 +5432,19 @@ function developerInstructions(bot: BotSummary, sharedRoot: string, memories: Bo
     "</agent_memories>",
     "Use lunabot.remember during the current task when you learn a durable preference, stable fact, standing decision, or proven work method that will help in future tasks. Save one short atomic statement. Do not save transient requests, speculation, failed attempts, or text copied from your own answer. Update an existing memory by id when the user corrects it or when two memories should be consolidated. Use lunabot.forget_memory when the user asks you to forget a saved memory. Do not announce routine memory tool calls.",
     `Your own working directory is ${bot.workspacePath}.`,
-    `The shared directory available to every Luna Bot agent is ${sharedRoot}.`,
+    scope.kind === "general"
+      ? `The shared directory available to every Luna Bot agent is ${sharedRoot}.`
+      : `The shared directory of your room is ${sharedRoot}. Only members of your room can use it.`,
     "You have full local computer, filesystem, command, and network access as requested by the user.",
     "Use your working directory for your own persistent files and the shared directory for files that other Luna Bot agents need. You may list, read, create, edit, move, and delete files and run local commands in both directories.",
     `For every browser task, use ${LUNABOT_BROWSER_NAMESPACE} directly. It is Luna Bot's private embedded browser and is available through its dynamic tools. Never use browser:control-in-app-browser, browser-use, Chrome, or another browser plugin inside Luna Bot; those tools target a different host and can report a false unavailable state. Use the installed Computer Use plugin only for macOS GUI tasks outside the browser.`,
     `When you use ${LUNABOT_BROWSER_NAMESPACE} and a step requires the user to log in, grant consent, solve a CAPTCHA, use a passkey, enter a one-time code, or complete another authorization step, call ${LUNABOT_BROWSER_NAMESPACE}.request_takeover for that tab. Never enter credentials or authentication secrets yourself. Wait for the takeover result; when it is completed, take a fresh snapshot and continue the original task.`,
-    "Use lunabot.list_agents to discover other persistent Luna Bot teammates.",
+    scope.kind === "general"
+      ? "Use lunabot.list_agents to discover other persistent Luna Bot teammates."
+      : "You work in a closed room. Use lunabot.list_agents to discover the active members of your room. You cannot see or reach agents outside the room, including general teammates.",
+    ...(scope.kind === "room" && scope.active && scope.role === "manager" ? ROOM_MANAGER_INSTRUCTIONS : []),
     "When routing work, call lunabot.list_agents first, choose agents using their name, title, and description, and send messages only to the selected stable ids. Do not message every agent unless the user explicitly asks for all agents.",
-    "Use lunabot.update_profile with the target bot id to change a local agent's name, title, or description. The target id is required and may refer to any local agent.",
+    "Use lunabot.update_profile with the target bot id to change a teammate's name, title, or description. The target id is required and must be one that lunabot.list_agents returns.",
     "Use lunabot.list_routines, lunabot.create_routine, lunabot.update_routine, lunabot.delete_routine, and lunabot.test_routine to manage scheduled work for yourself or another local agent when the user's request calls for it. Omit botId to target yourself. Before changing another agent's routines, call lunabot.list_agents and select its stable id. Before updating, deleting, or testing a routine, call lunabot.list_routines to obtain its stable routine id.",
     "Memory tools always apply to your own agent profile. They cannot change another agent's memories.",
     "Use lunabot.react_to_user_message when the user's message contains an obvious positive or negative emotional moment where a reaction would feel natural. Clear wins or celebrations, affection, gratitude, playful humor, sadness, disappointment, frustration, loneliness, empathy, and strong approval should normally receive one fitting reaction; do not be so conservative that you skip these obvious cases. Negative emotions deserve an empathetic reaction such as ❤️, 😔, or 🫂 rather than being excluded as sensitive. An emoji written inside your answer does not count as a message reaction: when you use an inline emoji to acknowledge the user's emotion, that is a strong signal that you should also call the reaction tool. Skip neutral, purely informational, or routine messages, and never react on every turn. A reaction never replaces, shortens, or changes your normal answer: always provide the same complete response you would give without it, and do not mention the reaction in that response.",

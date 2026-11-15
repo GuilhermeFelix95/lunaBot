@@ -19,8 +19,12 @@ import {
   ROUTINE_EVENT_ITEM_TYPE_PREFIX,
   ROUTINE_RUN_EVENT_ITEM_TYPE_PREFIX,
 } from "@lunabot/contracts/ipc";
-import { type DynamicRecord, isDynamicRecord, isNumber, isString } from "@lunabot/contracts/runtime-values";
+import { type DynamicRecord, isDynamicRecord, isNumber, isOneOf, isString } from "@lunabot/contracts/runtime-values";
 import { migrateLunaBotDatabase } from "./lunabot-database-schema";
+import type { RoomMembership } from "./room-scope";
+
+const ROOM_MEMBER_ROLE_VALUES = ["manager", "member"] as const;
+const ROOM_BROWSER_MODE_VALUES = ["exclusive", "shared"] as const;
 
 export interface OrchestrationEventInput {
   aggregateType: string;
@@ -252,6 +256,45 @@ export class LunaBotDatabase {
     return databaseRows(
       this.connection.prepare("SELECT agent_json FROM projection_agents ORDER BY sort_order, agent_id").all(),
     ).map((row) => JSON.parse(requiredStringColumn(row, "agent_json")));
+  }
+
+  // Every bot that belongs to a room, including the manager and dismissed copies. General bot listings exclude them.
+  roomMemberBotIds(): ReadonlySet<string> {
+    return new Set(
+      databaseRows(this.connection.prepare("SELECT bot_id FROM room_members").all()).map((row) =>
+        requiredStringColumn(row, "bot_id"),
+      ),
+    );
+  }
+
+  roomMemberships(): ReadonlyMap<string, RoomMembership> {
+    const rows = databaseRows(
+      this.connection
+        .prepare(
+          `SELECT m.bot_id, m.room_id, m.role, m.status AS member_status, r.status AS room_status, r.browser_mode
+           FROM room_members m JOIN rooms r ON r.room_id = m.room_id`,
+        )
+        .all(),
+    );
+    return new Map(
+      rows.map((row) => {
+        const role = requiredStringColumn(row, "role");
+        const browserMode = requiredStringColumn(row, "browser_mode");
+        if (!isOneOf(ROOM_MEMBER_ROLE_VALUES, role) || !isOneOf(ROOM_BROWSER_MODE_VALUES, browserMode)) {
+          throw new Error("Invalid room membership row.");
+        }
+        return [
+          requiredStringColumn(row, "bot_id"),
+          {
+            roomId: requiredStringColumn(row, "room_id"),
+            role,
+            memberActive: requiredStringColumn(row, "member_status") === "active",
+            roomActive: requiredStringColumn(row, "room_status") === "active",
+            browserMode,
+          },
+        ] as const;
+      }),
+    );
   }
 
   replaceAgents(commandId: string, agents: BotSummary[], eventType: string): void {
@@ -558,7 +601,8 @@ export class LunaBotDatabase {
     const limit = pageLimit(requestedLimit);
     const offset = cursor ? decodeSearchCursor(cursor) : 0;
     const pattern = `%${escapeLike(normalized)}%`;
-    const filter = botId ? "AND thread.agent_id = ?" : "";
+    // Global search skips room members. Their threads are reachable only through their own room or a bot filter.
+    const filter = botId ? "AND thread.agent_id = ?" : "AND thread.agent_id NOT IN (SELECT bot_id FROM room_members)";
     const parameters = botId ? [pattern, botId] : [pattern];
     const countRow = databaseRow(
       this.connection
@@ -1838,7 +1882,7 @@ function decodeMessagePinRow(row: DynamicRecord): StoredMessagePin {
   };
 }
 
-function databaseRows(value: unknown): DynamicRecord[] {
+export function databaseRows(value: unknown): DynamicRecord[] {
   if (!Array.isArray(value)) throw new Error("Invalid SQLite result set.");
   return value.map((row, index) => {
     if (!isDynamicRecord(row)) throw new Error(`Invalid SQLite row at index ${index}.`);
@@ -1846,7 +1890,7 @@ function databaseRows(value: unknown): DynamicRecord[] {
   });
 }
 
-function requiredStringColumn(row: DynamicRecord, key: string): string {
+export function requiredStringColumn(row: DynamicRecord, key: string): string {
   const value = row[key];
   if (!isString(value)) throw new Error(`Invalid SQLite column ${key}.`);
   return value;
@@ -1858,7 +1902,7 @@ function requiredNumberColumn(row: DynamicRecord, key: string): number {
   return value;
 }
 
-function optionalStringColumn(row: DynamicRecord, key: string): string | null {
+export function optionalStringColumn(row: DynamicRecord, key: string): string | null {
   const value = row[key];
   if (value === null || isString(value)) return value;
   throw new Error(`Invalid SQLite column ${key}.`);

@@ -8,6 +8,7 @@ import { type DynamicRecord, isDynamicRecord, isString } from "@lunabot/contract
 import { afterEach, describe, expect, it } from "vitest";
 import { removeDirectory, writeNodeExecutable } from "../test-utils/fs";
 import { ClaudeAgentClient } from "./claude-client";
+import { LUNABOT_ROOM_DYNAMIC_TOOLS } from "./lunabot-room-tools";
 import {
   decodeAccountReadResult,
   decodeModelListResponse,
@@ -167,6 +168,27 @@ if (process.argv[2] === "auth") {
       ]),
     );
     await client.stop();
+  });
+
+  it("gives a Claude room manager thread the five room tools", async () => {
+    const mcpServers = await startClaudeThread([LUNABOT_ROOM_DYNAMIC_TOOLS]);
+
+    expect(registeredToolNames(mcpServers, "lunabot_room").sort()).toEqual([
+      "request_dismiss",
+      "request_hire",
+      "request_new_bot",
+      "room_catalog",
+      "room_members",
+    ]);
+  });
+
+  it("keeps room tools out of Claude threads that do not list the room namespace", async () => {
+    const mcpServers = await startClaudeThread([
+      { type: "namespace", name: "lunabot_browser", tools: [] },
+      { type: "namespace", name: "lunabot", tools: [] },
+    ]);
+
+    expect(Object.keys(mcpServers).sort()).toEqual(["lunabot", "lunabot_browser"]);
   });
 
   it("keeps the CLI default alias from hiding the explicit model row", async () => {
@@ -748,6 +770,29 @@ class TestQuery implements AsyncIterable<TestStreamMessage> {
     this.closed = true;
     this.output.close();
   }
+}
+
+async function startClaudeThread(dynamicTools: unknown[]): Promise<DynamicRecord> {
+  root = await mkdtemp(join(tmpdir(), "lunabot-claude-client-"));
+  const executable = await writeNodeExecutable(root, "claude", "#!/usr/bin/env node\n", "cjs");
+  const captured: { mcpServers: DynamicRecord | null } = { mcpServers: null };
+  const client = new ClaudeAgentClient({ executable, version: "2.1.231" }, (params) => {
+    const options: DynamicRecord | null = isDynamicRecord(params.options) ? params.options : null;
+    captured.mcpServers = isDynamicRecord(options?.mcpServers) ? options.mcpServers : null;
+    return new TestQuery(new TestQueue<TestStreamMessage>());
+  });
+  client.start();
+  await client.request("thread/start", { cwd: root, dynamicTools }, decodeThreadResponse);
+  await client.stop();
+  if (captured.mcpServers === null) throw new Error("Claude query options were not captured.");
+  return captured.mcpServers;
+}
+
+function registeredToolNames(mcpServers: DynamicRecord, serverName: string): string[] {
+  const server = mcpServers[serverName];
+  const instance = isDynamicRecord(server) ? server.instance : null;
+  const registeredTools = isDynamicRecord(instance) ? instance._registeredTools : null;
+  return isDynamicRecord(registeredTools) ? Object.keys(registeredTools) : [];
 }
 
 async function waitFor(check: () => boolean): Promise<void> {

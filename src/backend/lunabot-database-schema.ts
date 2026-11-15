@@ -289,8 +289,47 @@ const MESSAGE_PINS_V12_SCHEMA_SQL = `
     ON projection_message_pins(thread_id, pinned_at DESC, message_id);
 `;
 
-// v9 through v11 change runtime state but not the schema. v12 adds projection_message_pins.
-const LATEST_SCHEMA_SQL = `${BASELINE_V8_SCHEMA_SQL}\n${MESSAGE_PINS_V12_SCHEMA_SQL}`;
+// v13 adds the Sala (rooms) tables. room_members.bot_id has no foreign key to projection_agents because
+// replaceAgents rewrites that table wholesale; room membership is cleared explicitly by RoomService.
+const ROOMS_V13_SCHEMA_SQL = `
+  CREATE TABLE rooms (
+    room_id TEXT PRIMARY KEY,
+    name TEXT NOT NULL CHECK(length(name) BETWEEN 1 AND 60),
+    status TEXT NOT NULL CHECK(status IN ('active', 'archived')),
+    browser_mode TEXT NOT NULL DEFAULT 'exclusive' CHECK(browser_mode IN ('exclusive', 'shared')),
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    archived_at TEXT
+  );
+  CREATE INDEX rooms_status ON rooms(status, created_at);
+  CREATE TABLE room_members (
+    room_id TEXT NOT NULL REFERENCES rooms(room_id) ON DELETE CASCADE,
+    bot_id TEXT NOT NULL,
+    role TEXT NOT NULL CHECK(role IN ('manager', 'member')),
+    status TEXT NOT NULL CHECK(status IN ('active', 'dismissed')),
+    added_at TEXT NOT NULL,
+    dismissed_at TEXT,
+    PRIMARY KEY(room_id, bot_id)
+  );
+  CREATE UNIQUE INDEX room_members_bot ON room_members(bot_id);
+  CREATE UNIQUE INDEX room_members_one_manager ON room_members(room_id) WHERE role = 'manager';
+  CREATE INDEX room_members_room_status ON room_members(room_id, status);
+  CREATE TABLE room_requests (
+    request_id TEXT PRIMARY KEY,
+    room_id TEXT NOT NULL REFERENCES rooms(room_id) ON DELETE CASCADE,
+    requested_by_bot_id TEXT NOT NULL,
+    kind TEXT NOT NULL CHECK(kind IN ('hire', 'dismiss', 'new_bot')),
+    status TEXT NOT NULL CHECK(status IN ('pending', 'rejected', 'fulfilled')),
+    payload_json TEXT NOT NULL CHECK(json_valid(payload_json)),
+    created_bot_id TEXT,
+    created_at TEXT NOT NULL,
+    resolved_at TEXT
+  );
+  CREATE INDEX room_requests_room ON room_requests(room_id, status, created_at);
+`;
+
+// v9 through v11 change runtime state but not the schema. v12 adds projection_message_pins; v13 adds rooms.
+const LATEST_SCHEMA_SQL = `${BASELINE_V8_SCHEMA_SQL}\n${MESSAGE_PINS_V12_SCHEMA_SQL}\n${ROOMS_V13_SCHEMA_SQL}`;
 
 export interface LunaBotMigrationOptions {
   appliedAt?: string;
@@ -326,6 +365,10 @@ const MIGRATIONS: readonly LunaBotMigration[] = [
   {
     version: 12,
     up: createMessagePinsTable,
+  },
+  {
+    version: 13,
+    up: createRoomsTables,
   },
 ];
 
@@ -418,6 +461,10 @@ function refreshProviderSessionsForDynamicTools(db: DatabaseSync, appliedAt: str
 
 function createMessagePinsTable(db: DatabaseSync): void {
   db.exec(MESSAGE_PINS_V12_SCHEMA_SQL);
+}
+
+function createRoomsTables(db: DatabaseSync): void {
+  db.exec(ROOMS_V13_SCHEMA_SQL);
 }
 
 function validateMigrationRegistry(): void {

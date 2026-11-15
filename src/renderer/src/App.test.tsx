@@ -635,6 +635,19 @@ describe("Luna Bot connected desktop shell", () => {
             return () => undefined;
           }),
         },
+        rooms: {
+          list: vi.fn().mockResolvedValue([]),
+          create: vi.fn(),
+          archive: vi.fn(),
+          reopen: vi.fn(),
+          deleteForever: vi.fn(),
+          dismissMember: vi.fn(),
+          resolveRequest: vi.fn(),
+          backstage: vi.fn().mockResolvedValue([]),
+          botProfiles: vi.fn().mockResolvedValue([]),
+          onChanged: vi.fn(() => () => undefined),
+          onBackstageChanged: vi.fn(() => () => undefined),
+        },
         maintenance: {
           exportData: vi.fn().mockResolvedValue({ saved: true }),
           exportDiagnostics: vi.fn().mockResolvedValue({ saved: true }),

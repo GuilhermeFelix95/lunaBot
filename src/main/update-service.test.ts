@@ -106,6 +106,18 @@ afterEach(() => {
 });
 
 describe("UpdateService", () => {
+  it("installs a downloaded update on quit on Windows and Linux, never on macOS", () => {
+    for (const [platform, expected] of [
+      ["win32", true],
+      ["linux", true],
+      ["darwin", false],
+    ] as const) {
+      const updater = new FakeUpdater();
+      createService(updater, { platform }).start(false);
+      expect(updater.autoInstallOnAppQuit, platform).toBe(expected);
+    }
+  });
+
   it("exposes restart as soon as the macOS download finishes", async () => {
     const updater = new FakeUpdater();
     makeUpdateAvailable(updater);

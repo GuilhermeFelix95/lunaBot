@@ -98,6 +98,10 @@ export interface MockLunaBotControls {
   dispose: () => void;
 }
 
+async function unavailableInPreview(): Promise<never> {
+  throw new Error("Rooms are not available in the preview yet.");
+}
+
 function clone<T>(value: T): T {
   return structuredClone(value);
 }
@@ -900,6 +904,19 @@ export function createMockLunaBot(options: MockLunaBotOptions = {}): MockLunaBot
         approvalPolicies.set(botId, mode);
         return mode;
       },
+    },
+    rooms: {
+      list: async () => [],
+      create: unavailableInPreview,
+      archive: unavailableInPreview,
+      reopen: unavailableInPreview,
+      deleteForever: unavailableInPreview,
+      dismissMember: unavailableInPreview,
+      resolveRequest: unavailableInPreview,
+      backstage: async () => [],
+      botProfiles: async () => [],
+      onChanged: () => () => undefined,
+      onBackstageChanged: () => () => undefined,
     },
     maintenance: {
       exportData: async () => ({ saved: true }),

@@ -89,6 +89,13 @@ import type {
   SetDynamicIslandInteractiveInput,
   SetDynamicIslandPreferenceInput,
 } from "./ipc-dynamic-island";
+import type {
+  CreateRoomInput,
+  DismissRoomMemberInput,
+  ResolveRoomRequestInput,
+  Room,
+  RoomBackstageMessage,
+} from "./ipc-rooms";
 import type { VoiceModelStatus, VoiceTranscriptionInput, VoiceTranscriptionResult } from "./ipc-voice";
 
 export interface AgentDesktopApi {
@@ -235,6 +242,21 @@ export interface AppDesktopApi {
   setLocale: (input: { locale: AppLocale }) => Promise<void>;
 }
 
+export interface RoomsDesktopApi {
+  list: () => Promise<Room[]>;
+  create: (input: CreateRoomInput) => Promise<Room>;
+  archive: (roomId: string) => Promise<Room>;
+  reopen: (roomId: string) => Promise<Room>;
+  deleteForever: (roomId: string) => Promise<void>;
+  dismissMember: (input: DismissRoomMemberInput) => Promise<Room>;
+  resolveRequest: (input: ResolveRoomRequestInput) => Promise<Room>;
+  backstage: (roomId: string) => Promise<RoomBackstageMessage[]>;
+  // Manager and active member profiles, for the room conversation. General listings never include them.
+  botProfiles: (roomId: string) => Promise<BotSummary[]>;
+  onChanged: (listener: (rooms: Room[]) => void) => () => void;
+  onBackstageChanged: (listener: (roomId: string) => void) => () => void;
+}
+
 export interface LunaBotDesktopApi {
   getAppInfo: () => Promise<AppInfo>;
   getSetupState: () => Promise<AppSetupState>;
@@ -255,6 +277,7 @@ export interface LunaBotDesktopApi {
   openUrl: (url: string) => Promise<void>;
   voice: VoiceDesktopApi;
   agent: AgentDesktopApi;
+  rooms: RoomsDesktopApi;
   browser: BrowserDesktopApi;
   update: UpdateDesktopApi;
   agentPreferences: AgentPreferencesDesktopApi;

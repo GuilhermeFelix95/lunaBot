@@ -232,7 +232,9 @@ function RoutineTarget(props: {
 }
 
 function markerLabel(marker: ChatActionMarkerModel): string {
-  if (marker.kind === "unavailable" || marker.kind === "approval-auto") return marker.label;
+  if (marker.kind === "unavailable" || marker.kind === "approval-auto" || marker.kind === "room-request") {
+    return marker.label;
+  }
   if (marker.kind === "agent-message") {
     return marker.direction === "outgoing" ? t("conversation.marker.messaged") : t("conversation.marker.messageFrom");
   }
@@ -268,7 +270,7 @@ function agentTargetsStyle(bots: Array<BotProfile | undefined>): string | undefi
 
 function markerAccessibleLabel(marker: ChatActionMarkerModel, bots: BotProfile[]): string {
   const label = markerLabel(marker);
-  if (marker.kind === "unavailable" || marker.kind === "approval-auto") return label;
+  if (marker.kind === "unavailable" || marker.kind === "approval-auto" || marker.kind === "room-request") return label;
   if (marker.kind === "agent-message") {
     const unavailableAgent = t("conversation.marker.unavailableAgent");
     const agentLabel =

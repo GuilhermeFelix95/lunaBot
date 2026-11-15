@@ -21,6 +21,7 @@ import { isCloseBrowserTabShortcut, isGlobalSearchShortcut, isToggleDevToolsShor
 import { persistentBrowserUrl } from "./browser-state";
 import type { DynamicToolCallParams, DynamicToolResult } from "./protocol";
 import { isRecord } from "./protocol";
+import { GENERAL_BROWSER_PARTITION, roomBrowserPartition } from "./room-scope";
 
 interface BrowserHostEvents {
   changed: [tabs: BrowserTab[], activeTabId: string | null];
@@ -149,6 +150,8 @@ export class BrowserHost {
   static readonly CONTROL_IDLE_GRACE_MS = 1_200;
   readonly #window: BrowserWindow;
   readonly #session: Session;
+  readonly #sessions = new Map<string, Session>();
+  readonly #partitionForBot: (botId: string | null) => string;
   readonly #downloadsRoot: string;
   readonly #statePath: string;
   readonly #tabs = new Map<string, InternalTab>();
@@ -169,12 +172,17 @@ export class BrowserHost {
   #persistQueue: Promise<void> = Promise.resolve();
   #destroyPromise: Promise<void> | null = null;
 
-  constructor(window: BrowserWindow, downloadsRoot: string, statePath: string) {
+  constructor(
+    window: BrowserWindow,
+    downloadsRoot: string,
+    statePath: string,
+    partitionForBot: (botId: string | null) => string = () => GENERAL_BROWSER_PARTITION,
+  ) {
     this.#window = window;
     this.#downloadsRoot = downloadsRoot;
     this.#statePath = statePath;
-    this.#session = session.fromPartition("persist:lunabot-browser", { cache: true });
-    this.#configureSession();
+    this.#partitionForBot = partitionForBot;
+    this.#session = this.#sessionForPartition(GENERAL_BROWSER_PARTITION);
   }
 
   async restore(): Promise<void> {
@@ -511,7 +519,7 @@ export class BrowserHost {
   async #destroyPersistentStorageAndViews(): Promise<void> {
     const statePersistence = this.#persistState();
     const closingTabDrains = [...this.#closingTabDrains.values()];
-    this.#session.flushStorageData();
+    this.#flushStorage();
     for (const tab of this.#tabs.values()) {
       this.#unmountView(tab.view);
       tab.view.webContents.close();
@@ -520,26 +528,49 @@ export class BrowserHost {
     this.#listeners.clear();
     this.clearControls();
     this.#controlListeners.clear();
-    const results = await Promise.allSettled([
-      this.#session.cookies.flushStore(),
-      statePersistence,
-      ...closingTabDrains,
-    ]);
+    const results = await Promise.allSettled([...this.#cookieFlushes(), statePersistence, ...closingTabDrains]);
     this.#closingTabDrains.clear();
-    this.#session.flushStorageData();
+    this.#flushStorage();
     const failure = results.find((result) => result.status === "rejected");
     if (failure?.status === "rejected") throw failure.reason;
   }
 
   async flushPersistentStorage(): Promise<void> {
-    this.#session.flushStorageData();
-    await this.#session.cookies.flushStore();
+    this.#flushStorage();
+    await Promise.all(this.#cookieFlushes());
     await this.#persistState();
+  }
+
+  // Closes the deleted room's tabs and erases its browser profile. General bots never use this partition.
+  async clearRoomBrowserData(roomId: string): Promise<void> {
+    const roomSession = this.#sessionForPartition(roomBrowserPartition(roomId));
+    for (const tab of [...this.#tabs.values()]) {
+      if (tab.view.webContents.session === roomSession) await this.close(tab.id);
+    }
+    await roomSession.clearStorageData();
+    await roomSession.clearCache();
+  }
+
+  #sessionForPartition(partition: string): Session {
+    const existing = this.#sessions.get(partition);
+    if (existing) return existing;
+    const partitionSession = session.fromPartition(partition, { cache: true });
+    this.#configureSession(partitionSession);
+    this.#sessions.set(partition, partitionSession);
+    return partitionSession;
+  }
+
+  #flushStorage(): void {
+    for (const partitionSession of this.#sessions.values()) partitionSession.flushStorageData();
+  }
+
+  #cookieFlushes(): Promise<void>[] {
+    return [...this.#sessions.values()].map((partitionSession) => partitionSession.cookies.flushStore());
   }
 
   #createTab(id: string, requestedUrl: string, ownerThreadId: string | null, ownerBotId: string | null): InternalTab {
     if (this.#destroyPromise) throw new Error("The browser host is closing.");
-    const view = this.#createView();
+    const view = this.#createView(this.#sessionForPartition(this.#partitionForBot(ownerBotId)));
     view.webContents.setUserAgent(embeddedBrowserUserAgentForUrl(this.#session.getUserAgent(), requestedUrl));
     this.#mountView(view);
     return {
@@ -554,10 +585,10 @@ export class BrowserHost {
     };
   }
 
-  #createView(): WebContentsView {
+  #createView(partitionSession: Session): WebContentsView {
     const view = new WebContentsView({
       webPreferences: {
-        session: this.#session,
+        session: partitionSession,
         sandbox: true,
         contextIsolation: true,
         nodeIntegration: false,
@@ -569,17 +600,17 @@ export class BrowserHost {
     return view;
   }
 
-  #configureSession(): void {
-    const userAgent = embeddedBrowserUserAgent(this.#session.getUserAgent());
-    this.#session.setUserAgent(userAgent, preferredBrowserLanguageCodes());
-    this.#session.webRequest.onBeforeSendHeaders((details, callback) => {
+  #configureSession(target: Session): void {
+    const userAgent = embeddedBrowserUserAgent(target.getUserAgent());
+    target.setUserAgent(userAgent, preferredBrowserLanguageCodes());
+    target.webRequest.onBeforeSendHeaders((details, callback) => {
       callback({
         requestHeaders: browserRequestHeaders(details.requestHeaders),
       });
     });
-    this.#session.setPermissionRequestHandler((_webContents, _permission, callback) => callback(false));
-    this.#session.setPermissionCheckHandler(() => false);
-    this.#session.on("will-download", (_event, item) => {
+    target.setPermissionRequestHandler((_webContents, _permission, callback) => callback(false));
+    target.setPermissionCheckHandler(() => false);
+    target.on("will-download", (_event, item) => {
       const safeName = basename(item.getFilename()).replace(/[^a-zA-Z0-9._ -]/g, "_");
       const downloadPath = uniqueDownloadPath(
         this.#downloadsRoot,

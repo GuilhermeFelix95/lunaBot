@@ -13,6 +13,8 @@ import { removeDirectory } from "../test-utils/fs";
 import { LunaBotDatabase } from "./lunabot-database";
 
 const roots: string[] = [];
+// Pre-v13 fixtures must drop the room tables that the latest schema creates, or the v13 migration cannot run.
+const DROP_ROOM_TABLES_SQL = "DROP TABLE room_requests; DROP TABLE room_members; DROP TABLE rooms;";
 
 afterEach(async () => {
   await Promise.all(roots.splice(0).map((root) => removeDirectory(root)));
@@ -67,6 +69,7 @@ describe("LunaBotDatabase", () => {
       { version: 10 },
       { version: 11 },
       { version: 12 },
+      { version: 13 },
     ]);
     database.close();
   });
@@ -636,7 +639,7 @@ describe("LunaBotDatabase", () => {
 
     const legacy = new DatabaseSync(database.path);
     legacy.exec("PRAGMA journal_mode = WAL");
-    legacy.exec("DROP TABLE projection_message_pins");
+    legacy.exec(`DROP TABLE projection_message_pins; ${DROP_ROOM_TABLES_SQL}`);
     legacy.prepare("DELETE FROM schema_migrations WHERE version >= 8").run();
     legacy
       .prepare("INSERT OR IGNORE INTO schema_migrations(version, applied_at) VALUES (3, ?)")
@@ -714,9 +717,10 @@ describe("LunaBotDatabase", () => {
       DROP TABLE projection_agent_routines;
       DROP TABLE projection_agent_memories;
       DROP TABLE projection_message_pins;
+      ${DROP_ROOM_TABLES_SQL}
       DELETE FROM schema_migrations WHERE version >= 8;
       INSERT OR IGNORE INTO schema_migrations(version, applied_at)
-        VALUES (4, '2026-08-20T10:00:00.000Z');
+        VALUES (4,'2026-08-20T10:00:00.000Z');
     `);
     legacy.close();
 
@@ -744,6 +748,7 @@ describe("LunaBotDatabase", () => {
       { version: 10 },
       { version: 11 },
       { version: 12 },
+      { version: 13 },
     ]);
     migrated.close();
   });
@@ -812,6 +817,7 @@ describe("LunaBotDatabase", () => {
       { version: 10 },
       { version: 11 },
       { version: 12 },
+      { version: 13 },
     ]);
     retried.close();
   });
@@ -834,7 +840,7 @@ describe("LunaBotDatabase", () => {
     database.close();
 
     const legacy = new DatabaseSync(database.path);
-    legacy.exec("DROP TABLE projection_message_pins");
+    legacy.exec(`DROP TABLE projection_message_pins; ${DROP_ROOM_TABLES_SQL}`);
     legacy.prepare("DELETE FROM schema_migrations WHERE version >= 10").run();
     legacy.close();
 
@@ -865,7 +871,7 @@ describe("LunaBotDatabase", () => {
     database.close();
 
     const legacy = new DatabaseSync(database.path);
-    legacy.exec("DROP TABLE projection_message_pins");
+    legacy.exec(`DROP TABLE projection_message_pins; ${DROP_ROOM_TABLES_SQL}`);
     legacy.prepare("DELETE FROM schema_migrations WHERE version >= 11").run();
     legacy.close();
 
@@ -901,6 +907,7 @@ describe("LunaBotDatabase", () => {
     const legacy = new DatabaseSync(database.path);
     legacy.exec(`
       DROP TABLE projection_message_pins;
+      ${DROP_ROOM_TABLES_SQL}
       DELETE FROM schema_migrations WHERE version >= 11;
       CREATE TRIGGER reject_session_refresh
       BEFORE UPDATE OF state ON projection_provider_sessions
@@ -939,7 +946,7 @@ describe("LunaBotDatabase", () => {
     database.close();
 
     const newer = new DatabaseSync(database.path);
-    newer.prepare("INSERT INTO schema_migrations(version, applied_at) VALUES (13, ?)").run("2026-08-20T10:00:00.000Z");
+    newer.prepare("INSERT INTO schema_migrations(version, applied_at) VALUES (14, ?)").run("2026-08-20T10:00:00.000Z");
     newer.close();
 
     const downgradedApp = new LunaBotDatabase(root);
@@ -1009,9 +1016,10 @@ describe("LunaBotDatabase", () => {
       CREATE INDEX provider_sessions_thread
         ON projection_provider_sessions(thread_id, provider, state);
       DROP TABLE projection_message_pins;
+      ${DROP_ROOM_TABLES_SQL}
       DELETE FROM schema_migrations WHERE version >= 8;
       INSERT OR IGNORE INTO schema_migrations(version, applied_at)
-        VALUES (6, '2026-08-20T10:00:00.000Z');
+        VALUES (6,'2026-08-20T10:00:00.000Z');
       PRAGMA foreign_keys = ON;
     `);
     legacy.close();
@@ -1050,6 +1058,7 @@ describe("LunaBotDatabase", () => {
       const legacy = new DatabaseSync(database.path);
       legacy.exec(`
         DROP TABLE projection_message_pins;
+        ${DROP_ROOM_TABLES_SQL}
         DELETE FROM schema_migrations WHERE version >= ${fixtureVersion};
       `);
       legacy.close();
@@ -1076,7 +1085,8 @@ describe("LunaBotDatabase", () => {
     const legacy = new DatabaseSync(database.path);
     legacy.exec(`
       DROP TABLE projection_message_pins;
-      DELETE FROM schema_migrations WHERE version = 12;
+      ${DROP_ROOM_TABLES_SQL}
+      DELETE FROM schema_migrations WHERE version >= 12;
       CREATE TABLE projection_message_pins (blocker TEXT);
     `);
     legacy.close();
@@ -1110,7 +1120,8 @@ describe("LunaBotDatabase", () => {
     const legacy = new DatabaseSync(database.path);
     legacy.exec(`
       DROP TABLE projection_message_pins;
-      DELETE FROM schema_migrations WHERE version = 12;
+      ${DROP_ROOM_TABLES_SQL}
+      DELETE FROM schema_migrations WHERE version >= 12;
       PRAGMA foreign_keys = OFF;
       INSERT INTO projection_thread_messages (
         thread_id, message_id, turn_id, author, status, item_type, created_at, ordinal, message_json, last_event_sequence
@@ -1143,6 +1154,134 @@ describe("LunaBotDatabase", () => {
 
     const reopened = new LunaBotDatabase(root);
     await expect(reopened.initialize()).rejects.toThrow("migration history is missing version 10");
+  });
+
+  it("adds rooms to version 8 through 12 histories without losing conversations", async () => {
+    for (const historyVersion of [8, 9, 10, 11, 12]) {
+      const root = await mkdtemp(join(tmpdir(), `lunabot-db-rooms-v${historyVersion}-`));
+      roots.push(root);
+      const database = new LunaBotDatabase(root);
+      await database.initialize();
+      const bot = testBot();
+      if (!bot.threadId) throw new Error("The test bot has no thread.");
+      database.replaceAgents("agents-import", [bot], "agents.imported");
+      database.persistConversation(numberedConversationSnapshot(bot, ["message-0"]), "conversation.snapshot-updated");
+      database.close();
+
+      const legacy = new DatabaseSync(database.path);
+      legacy.exec(`
+        ${DROP_ROOM_TABLES_SQL}
+        ${historyVersion < 12 ? "DROP TABLE projection_message_pins;" : ""}
+        DELETE FROM schema_migrations WHERE version > ${historyVersion};
+      `);
+      legacy.close();
+
+      const migrated = new LunaBotDatabase(root);
+      await migrated.initialize();
+      expect(migrated.readConversation(bot.id, bot.threadId).messages).toMatchObject([{ id: "message-0" }]);
+      expect(
+        migrated.connection
+          .prepare(
+            "SELECT name FROM sqlite_master WHERE type = 'table' AND name IN ('rooms', 'room_members', 'room_requests') ORDER BY name",
+          )
+          .all(),
+      ).toEqual([{ name: "room_members" }, { name: "room_requests" }, { name: "rooms" }]);
+      expect(
+        migrated.connection.prepare("SELECT 1 AS applied FROM schema_migrations WHERE version = 13").get(),
+      ).toEqual({ applied: 1 });
+      expect(migrated.connection.prepare("PRAGMA foreign_key_check").all()).toEqual([]);
+      expect(migrated.connection.prepare("PRAGMA quick_check").get()).toMatchObject({ quick_check: "ok" });
+      migrated.close();
+    }
+  }, 60_000);
+
+  it("rolls back a failed rooms migration and succeeds on retry", async () => {
+    const root = await mkdtemp(join(tmpdir(), "lunabot-db-rooms-rollback-"));
+    roots.push(root);
+    const database = new LunaBotDatabase(root);
+    await database.initialize();
+    database.close();
+
+    const legacy = new DatabaseSync(database.path);
+    legacy.exec(`
+      ${DROP_ROOM_TABLES_SQL}
+      DELETE FROM schema_migrations WHERE version >= 13;
+      CREATE TABLE room_members (blocker TEXT);
+    `);
+    legacy.close();
+
+    const failed = new LunaBotDatabase(root);
+    await expect(failed.initialize()).rejects.toThrow("migration to version 13 failed");
+
+    const rolledBack = new DatabaseSync(database.path);
+    expect(rolledBack.prepare("SELECT 1 FROM schema_migrations WHERE version = 13").get()).toBeUndefined();
+    expect(rolledBack.prepare("SELECT 1 FROM sqlite_master WHERE name = 'rooms'").get()).toBeUndefined();
+    expect(rolledBack.prepare("PRAGMA table_info(room_members)").all()).toEqual([
+      expect.objectContaining({ name: "blocker" }),
+    ]);
+    rolledBack.exec("DROP TABLE room_members");
+    rolledBack.close();
+
+    const retried = new LunaBotDatabase(root);
+    await retried.initialize();
+    expect(retried.connection.prepare("SELECT 1 AS applied FROM schema_migrations WHERE version = 13").get()).toEqual({
+      applied: 1,
+    });
+    expect(retried.connection.prepare("PRAGMA table_info(room_members)").all()).toContainEqual(
+      expect.objectContaining({ name: "role" }),
+    );
+    retried.close();
+  });
+
+  it("rejects modern migration history with a missing version 12", async () => {
+    const root = await mkdtemp(join(tmpdir(), "lunabot-db-gap-12-"));
+    roots.push(root);
+    const database = new LunaBotDatabase(root);
+    await database.initialize();
+    database.close();
+
+    const incomplete = new DatabaseSync(database.path);
+    incomplete.prepare("DELETE FROM schema_migrations WHERE version = 12").run();
+    incomplete.close();
+
+    const reopened = new LunaBotDatabase(root);
+    await expect(reopened.initialize()).rejects.toThrow("migration history is missing version 12");
+  });
+
+  it("keeps room membership and request rows within schema constraints and cascades room deletion", async () => {
+    const database = await createDatabase();
+    const connection = database.connection;
+    const now = "2026-08-20T10:00:00.000Z";
+    connection
+      .prepare("INSERT INTO rooms (room_id, name, status, created_at, updated_at) VALUES (?, ?, 'active', ?, ?)")
+      .run("room-a", "Room A", now, now);
+    connection
+      .prepare("INSERT INTO rooms (room_id, name, status, created_at, updated_at) VALUES (?, ?, 'active', ?, ?)")
+      .run("room-b", "Room B", now, now);
+    const insertMember = connection.prepare(
+      "INSERT INTO room_members (room_id, bot_id, role, status, added_at) VALUES (?, ?, ?, 'active', ?)",
+    );
+    insertMember.run("room-a", "manager-a", "manager", now);
+    insertMember.run("room-a", "copy-a", "member", now);
+
+    expect(() => insertMember.run("room-a", "manager-b", "manager", now)).toThrow(/UNIQUE constraint failed/);
+    expect(() => insertMember.run("room-b", "copy-a", "member", now)).toThrow(/UNIQUE constraint failed/);
+    expect(() => insertMember.run("missing-room", "copy-c", "member", now)).toThrow(/FOREIGN KEY constraint failed/);
+    expect(() =>
+      connection
+        .prepare("INSERT INTO rooms (room_id, name, status, created_at, updated_at) VALUES (?, ?, 'active', ?, ?)")
+        .run("room-long", "x".repeat(61), now, now),
+    ).toThrow(/CHECK constraint failed/);
+    connection
+      .prepare(
+        "INSERT INTO room_requests (request_id, room_id, requested_by_bot_id, kind, status, payload_json, created_at) VALUES (?, ?, ?, 'hire', 'pending', '{}', ?)",
+      )
+      .run("request-a", "room-a", "manager-a", now);
+
+    connection.prepare("DELETE FROM rooms WHERE room_id = ?").run("room-a");
+    expect(connection.prepare("SELECT COUNT(*) AS count FROM room_members").get()).toEqual({ count: 0 });
+    expect(connection.prepare("SELECT COUNT(*) AS count FROM room_requests").get()).toEqual({ count: 0 });
+    database.close();
   });
 
   it("caps message pins at fifty per thread and keeps the existing pin when repeated", async () => {
@@ -1221,9 +1360,10 @@ function downgradeReactionsToV7(database: DatabaseSync): void {
     DROP TABLE projection_reactions;
     ALTER TABLE projection_reactions_v7 RENAME TO projection_reactions;
     DROP TABLE projection_message_pins;
+    ${DROP_ROOM_TABLES_SQL}
     DELETE FROM schema_migrations WHERE version >= 8;
     INSERT OR IGNORE INTO schema_migrations(version, applied_at)
-      VALUES (7, '2026-08-20T10:00:00.000Z');
+      VALUES (7,'2026-08-20T10:00:00.000Z');
   `);
 }
 

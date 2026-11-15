@@ -1,5 +1,5 @@
 import type { ConversationMessage, ConversationSnapshot } from "@lunabot/contracts/ipc";
-import { isImageGenerationAspectRatio } from "@lunabot/contracts/ipc";
+import { isImageGenerationAspectRatio, roomRequestNoticeItemType } from "@lunabot/contracts/ipc";
 import { isDynamicRecord, isString } from "@lunabot/contracts/runtime-values";
 import type { DeliveryContext } from "./mailbox-store";
 import type { ThreadItem, ThreadResponse } from "./protocol";
@@ -33,8 +33,22 @@ export function snapshotFromThread(
           messages.push({
             id: delivery?.delivery.id ?? item.id,
             turnId: turn.id,
-            author: delivery?.delivery.sender.kind === "bot" ? "agent" : "user",
-            source: delivery?.delivery.sender.kind === "bot" ? "agent" : "user",
+            author:
+              delivery?.delivery.sender.kind === "bot"
+                ? "agent"
+                : delivery?.delivery.sender.kind === "system"
+                  ? "system"
+                  : "user",
+            source:
+              delivery?.delivery.sender.kind === "bot"
+                ? "agent"
+                : delivery?.delivery.sender.kind === "system"
+                  ? "system"
+                  : "user",
+            itemType:
+              delivery?.delivery.sender.kind === "system"
+                ? roomRequestNoticeItemType(delivery.delivery.sender.notice)
+                : undefined,
             senderBotId: delivery?.delivery.sender.kind === "bot" ? delivery.delivery.sender.botId : undefined,
             replyToMessageId: delivery?.delivery.replyToMessageId,
             attachments: delivery?.delivery.attachments,

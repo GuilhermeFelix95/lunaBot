@@ -1,0 +1,697 @@
+/* Rooms: create dialog. Colors come only from --lunabot-* tokens so every theme and mode applies. */
+
+.rooms-create-overlay {
+  z-index: var(--lunabot-layer-dialog);
+}
+
+.rooms-create-dialog {
+  position: fixed;
+  z-index: calc(var(--lunabot-layer-dialog) + 1);
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  outline: none;
+  display: flex;
+  flex-direction: column;
+  gap: var(--lunabot-space-4);
+  width: min(520px, calc(100vw - 32px));
+  max-height: calc(100vh - 48px);
+  overflow-y: auto;
+  padding: var(--lunabot-space-6);
+  border-radius: var(--lunabot-radius-dialog);
+  background: var(--lunabot-surface-raised);
+  color: var(--lunabot-ink);
+}
+
+.rooms-create-header {
+  display: flex;
+  flex-direction: column;
+  gap: var(--lunabot-space-1);
+}
+
+.rooms-create-header [role="heading"],
+.rooms-create-header h2 {
+  margin: 0;
+  font-family: var(--lunabot-font-display);
+  font-size: 26px;
+  font-weight: 400;
+}
+
+.rooms-create-header p {
+  margin: 0;
+  color: var(--lunabot-ink-2);
+  font-size: 14px;
+  font-weight: 400;
+  line-height: 1.45;
+}
+
+.rooms-create-form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--lunabot-space-4);
+}
+
+.rooms-create-bots {
+  display: flex;
+  flex-direction: column;
+  gap: var(--lunabot-space-2);
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.rooms-create-hint,
+.rooms-create-count {
+  margin: 0;
+  font-size: var(--lunabot-text-sm);
+  line-height: var(--lunabot-leading-sm);
+  color: var(--lunabot-ink-2);
+}
+
+.rooms-create-bot-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--lunabot-space-1);
+  max-height: 180px;
+  margin: 0;
+  padding: 0;
+  overflow-y: auto;
+  list-style: none;
+}
+
+.rooms-create-bot {
+  display: flex;
+  align-items: center;
+  gap: var(--lunabot-space-2);
+  padding: var(--lunabot-space-1-5) var(--lunabot-space-2);
+  border-radius: var(--lunabot-radius-sm);
+  font-size: var(--lunabot-text-md);
+  cursor: pointer;
+}
+
+.rooms-create-bot:hover {
+  background: var(--lunabot-surface-sunken);
+}
+
+.rooms-create-bot-name {
+  font-weight: var(--lunabot-weight-medium);
+}
+
+.rooms-create-bot-title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--lunabot-ink-2);
+  font-size: var(--lunabot-text-sm);
+}
+
+.rooms-create-browser {
+  display: flex;
+  flex-direction: column;
+  gap: var(--lunabot-space-2);
+}
+
+.rooms-create-option {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--lunabot-space-2);
+  padding: var(--lunabot-space-2);
+  border: 1px solid var(--lunabot-line);
+  border-radius: var(--lunabot-radius-md);
+  cursor: pointer;
+}
+
+.rooms-create-option[data-checked] {
+  border-color: var(--lunabot-accent);
+}
+
+.rooms-create-option-control {
+  display: inline-flex;
+  flex-shrink: 0;
+  width: var(--lunabot-icon-md);
+  height: var(--lunabot-icon-md);
+  align-items: center;
+  justify-content: center;
+  margin-top: 2px;
+  border: 1px solid var(--lunabot-line-strong);
+  border-radius: var(--lunabot-radius-pill);
+}
+
+.rooms-create-option-control::after {
+  content: "";
+  width: 6px;
+  height: 6px;
+  border-radius: var(--lunabot-radius-pill);
+  background: transparent;
+}
+
+.rooms-create-option[data-checked] .rooms-create-option-control {
+  border-color: var(--lunabot-accent);
+}
+
+.rooms-create-option[data-checked] .rooms-create-option-control::after {
+  background: var(--lunabot-accent);
+}
+
+.rooms-create-option-text {
+  display: flex;
+  flex-direction: column;
+  gap: var(--lunabot-space-0-5);
+  font-size: var(--lunabot-text-md);
+}
+
+.rooms-create-option-hint {
+  color: var(--lunabot-ink-2);
+  font-size: var(--lunabot-text-sm);
+}
+
+.rooms-create-notice {
+  margin: 0;
+  padding: var(--lunabot-space-2) var(--lunabot-space-3);
+  border-radius: var(--lunabot-radius-md);
+  background: var(--lunabot-surface-sunken);
+  color: var(--lunabot-ink-2);
+  font-size: var(--lunabot-text-sm);
+  line-height: var(--lunabot-leading-sm);
+}
+
+.rooms-create-error {
+  margin: 0;
+  color: var(--lunabot-danger);
+  font-size: var(--lunabot-text-sm);
+}
+
+.rooms-create-footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--lunabot-space-2);
+}
+
+/* Rooms: sidebar section. */
+
+.rooms-sidebar {
+  display: flex;
+  flex-direction: column;
+  gap: var(--lunabot-space-1);
+  min-width: 0;
+  padding: var(--lunabot-space-2) 0;
+}
+
+.rooms-sidebar-heading {
+  margin: 0;
+  padding: 0 var(--lunabot-space-2);
+  color: var(--lunabot-ink-2);
+  font-size: var(--lunabot-text-sm);
+  font-weight: var(--lunabot-weight-medium);
+}
+
+.rooms-sidebar-error,
+.rooms-sidebar-empty {
+  margin: 0;
+  padding: 0 var(--lunabot-space-2);
+  font-size: var(--lunabot-text-sm);
+}
+
+.rooms-sidebar-error {
+  color: var(--lunabot-danger);
+}
+
+.rooms-sidebar-empty {
+  color: var(--lunabot-ink-2);
+}
+
+.rooms-sidebar-list,
+.rooms-sidebar-members {
+  display: flex;
+  flex-direction: column;
+  gap: var(--lunabot-space-0-5);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.rooms-sidebar-members {
+  padding-left: var(--lunabot-space-6);
+}
+
+.rooms-sidebar-room-row,
+.rooms-sidebar-member-row,
+.rooms-sidebar-archived {
+  display: flex;
+  align-items: center;
+  gap: var(--lunabot-space-1);
+  min-width: 0;
+}
+
+.rooms-sidebar-archived {
+  flex-wrap: wrap;
+  padding: var(--lunabot-space-1) var(--lunabot-space-2);
+}
+
+.rooms-sidebar-room-open,
+.rooms-sidebar-member {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  gap: var(--lunabot-space-2);
+  min-width: 0;
+  padding: var(--lunabot-space-1-5) var(--lunabot-space-2);
+  border: 0;
+  border-radius: var(--lunabot-radius-sm);
+  background: transparent;
+  color: var(--lunabot-ink);
+  font: inherit;
+  font-size: var(--lunabot-text-md);
+  text-align: left;
+  cursor: pointer;
+}
+
+.rooms-sidebar-room-open[aria-current="page"] {
+  background: var(--lunabot-surface-sunken);
+  font-weight: var(--lunabot-weight-medium);
+}
+
+.rooms-sidebar-room-open:hover,
+.rooms-sidebar-member:hover,
+.rooms-sidebar-icon-button:hover,
+.rooms-sidebar-group-toggle:hover {
+  background: var(--lunabot-surface-sunken);
+}
+
+.rooms-sidebar-room-open:focus-visible,
+.rooms-sidebar-member:focus-visible,
+.rooms-sidebar-icon-button:focus-visible,
+.rooms-sidebar-group-toggle:focus-visible,
+.rooms-view-tab:focus-visible {
+  outline: 2px solid var(--lunabot-accent);
+  outline-offset: 2px;
+}
+
+.rooms-sidebar-icon-button {
+  display: inline-flex;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--lunabot-radius-sm);
+  background: transparent;
+  color: var(--lunabot-ink-2);
+  cursor: pointer;
+}
+
+.rooms-sidebar-mark {
+  display: inline-flex;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+  width: var(--lunabot-icon-md);
+  height: var(--lunabot-icon-md);
+  border-radius: var(--lunabot-radius-sm);
+  background: var(--lunabot-surface-sunken);
+  color: var(--lunabot-ink);
+  font-size: var(--lunabot-text-sm);
+  font-weight: var(--lunabot-weight-medium);
+}
+
+.rooms-sidebar-avatar {
+  flex-shrink: 0;
+  width: var(--lunabot-icon-md);
+  height: var(--lunabot-icon-md);
+}
+
+.rooms-sidebar-room-name,
+.rooms-sidebar-member-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.rooms-sidebar-count {
+  flex-shrink: 0;
+  color: var(--lunabot-ink-2);
+  font-size: var(--lunabot-text-sm);
+}
+
+.rooms-badge {
+  flex-shrink: 0;
+  padding: 0 var(--lunabot-space-1-5);
+  border-radius: var(--lunabot-radius-pill);
+  background: var(--lunabot-surface-sunken);
+  color: var(--lunabot-ink-2);
+  font-size: var(--lunabot-text-2xs);
+  line-height: var(--lunabot-leading-sm);
+}
+
+.rooms-badge-manager,
+.rooms-create-default {
+  background: var(--lunabot-accent);
+  color: var(--lunabot-accent-ink);
+}
+
+.rooms-create-default {
+  margin-left: var(--lunabot-space-1-5);
+  vertical-align: middle;
+}
+
+.rooms-sidebar-group {
+  display: flex;
+  flex-direction: column;
+  gap: var(--lunabot-space-0-5);
+  margin-top: var(--lunabot-space-2);
+}
+
+.rooms-sidebar-group-toggle {
+  display: flex;
+  align-items: center;
+  gap: var(--lunabot-space-1);
+  padding: var(--lunabot-space-1) var(--lunabot-space-2);
+  border: 0;
+  border-radius: var(--lunabot-radius-sm);
+  background: transparent;
+  color: var(--lunabot-ink-2);
+  font: inherit;
+  font-size: var(--lunabot-text-sm);
+  cursor: pointer;
+}
+
+.rooms-sidebar-archived-actions {
+  display: flex;
+  gap: var(--lunabot-space-1);
+  margin-left: auto;
+}
+
+/* Rooms: compact sidebar (icons only) and the activity dot shared by the list and the tabs. */
+
+.rooms-sidebar-compact {
+  display: flex;
+  flex-direction: column;
+  gap: var(--lunabot-space-1);
+  margin: 0;
+  padding: var(--lunabot-space-2) 0;
+  list-style: none;
+}
+
+.rooms-sidebar-compact-room {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  padding: var(--lunabot-space-1);
+  border: 0;
+  border-radius: var(--lunabot-radius-sm);
+  background: transparent;
+  color: var(--lunabot-ink);
+  font: inherit;
+  cursor: pointer;
+}
+
+.rooms-sidebar-compact-room:hover,
+.rooms-sidebar-compact-room[aria-current="page"] {
+  background: var(--lunabot-surface-sunken);
+}
+
+.rooms-sidebar-compact-room:focus-visible {
+  outline: 2px solid var(--lunabot-accent);
+  outline-offset: 2px;
+}
+
+.rooms-activity-dot {
+  display: inline-block;
+  flex-shrink: 0;
+  width: 6px;
+  height: 6px;
+  border-radius: var(--lunabot-radius-pill);
+  background: var(--lunabot-accent);
+}
+
+.rooms-sidebar-compact-room .rooms-activity-dot {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+}
+
+/* Rooms: confirmation dialogs. */
+
+.rooms-dialog-backdrop {
+  z-index: calc(var(--lunabot-layer-dialog) + 2);
+}
+
+.rooms-dialog {
+  position: fixed;
+  z-index: calc(var(--lunabot-layer-dialog) + 3);
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  outline: none;
+  display: flex;
+  flex-direction: column;
+  gap: var(--lunabot-space-4);
+  width: min(440px, calc(100vw - 32px));
+  max-height: calc(100vh - 48px);
+  overflow-y: auto;
+  padding: var(--lunabot-space-6);
+  border-radius: var(--lunabot-radius-dialog);
+  background: var(--lunabot-surface-raised);
+  color: var(--lunabot-ink);
+}
+
+.rooms-dialog-title {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 600;
+  color: var(--lunabot-ink);
+}
+
+.rooms-dialog-description {
+  margin: 0;
+  font-weight: 400;
+  color: var(--lunabot-ink-2);
+}
+
+.rooms-dialog-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--lunabot-space-2);
+}
+
+/* Rooms: room view with Conversation and Backstage tabs. */
+
+.rooms-view {
+  display: flex;
+  flex-direction: column;
+  gap: var(--lunabot-space-4);
+  min-width: 0;
+  min-height: 0;
+  height: 100%;
+  padding: var(--lunabot-space-6);
+  overflow: hidden;
+  background: var(--lunabot-main);
+  color: var(--lunabot-ink);
+}
+
+.rooms-view-missing {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  padding: var(--lunabot-space-6);
+  color: var(--lunabot-ink-2);
+}
+
+.rooms-view-header {
+  display: flex;
+  align-items: center;
+  gap: var(--lunabot-space-2);
+  min-width: 0;
+}
+
+.rooms-view-header .rooms-sidebar-icon-button {
+  margin-left: auto;
+}
+
+.rooms-view-title {
+  min-width: 0;
+  margin: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--lunabot-text-lg);
+  font-weight: var(--lunabot-weight-medium);
+}
+
+.rooms-view-tabs {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  gap: var(--lunabot-space-3);
+  min-height: 0;
+}
+
+.rooms-view-tab .rooms-activity-dot {
+  margin-left: var(--lunabot-space-1-5);
+  vertical-align: middle;
+}
+
+.rooms-view-tablist {
+  display: flex;
+  gap: var(--lunabot-space-1);
+  border-bottom: 1px solid var(--lunabot-line);
+}
+
+.rooms-view-tab {
+  padding: var(--lunabot-space-2) var(--lunabot-space-3);
+  border: 0;
+  border-bottom: 2px solid transparent;
+  background: transparent;
+  color: var(--lunabot-ink-2);
+  font: inherit;
+  cursor: pointer;
+}
+
+.rooms-view-tab[aria-selected="true"] {
+  border-bottom-color: var(--lunabot-accent);
+  color: var(--lunabot-ink);
+}
+
+.rooms-view-panel {
+  display: flex;
+  flex-direction: column;
+  gap: var(--lunabot-space-3);
+  min-width: 0;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+.rooms-view-conversation {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: hidden;
+}
+
+/* The conversation owns its scroller, which follows the newest message. Request cards stay above it. */
+.rooms-view-conversation > :not(.rooms-request-list) {
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+.rooms-view-conversation > .rooms-request-list {
+  flex: 0 0 auto;
+  max-height: 40%;
+  overflow-y: auto;
+}
+
+.rooms-view-notice {
+  margin: 0;
+  padding: var(--lunabot-space-2) var(--lunabot-space-3);
+  border-radius: var(--lunabot-radius-md);
+  background: var(--lunabot-surface-sunken);
+  color: var(--lunabot-ink-2);
+  font-size: var(--lunabot-text-sm);
+  line-height: var(--lunabot-leading-sm);
+}
+
+.rooms-view-empty {
+  margin: 0;
+  color: var(--lunabot-ink-2);
+  font-size: var(--lunabot-text-sm);
+}
+
+/* Rooms: manager requests. */
+
+.rooms-request-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--lunabot-space-3);
+}
+
+.rooms-request {
+  display: flex;
+  flex-direction: column;
+  gap: var(--lunabot-space-2);
+  padding: var(--lunabot-space-4);
+  border: 1px solid var(--lunabot-line);
+  border-radius: var(--lunabot-radius-md);
+  background: var(--lunabot-surface-raised);
+}
+
+.rooms-request-title {
+  margin: 0;
+  font-size: var(--lunabot-text-md);
+  font-weight: var(--lunabot-weight-medium);
+}
+
+.rooms-request-note {
+  margin: 0;
+  color: var(--lunabot-ink-2);
+  font-size: var(--lunabot-text-sm);
+  line-height: var(--lunabot-leading-sm);
+}
+
+.rooms-request-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--lunabot-space-2);
+}
+
+/* Rooms: read-only backstage. */
+
+.rooms-backstage {
+  display: flex;
+  flex-direction: column;
+  gap: var(--lunabot-space-3);
+  min-width: 0;
+}
+
+.rooms-backstage-filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--lunabot-space-1);
+}
+
+.rooms-backstage-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--lunabot-space-2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.rooms-backstage-message {
+  display: flex;
+  flex-direction: column;
+  gap: var(--lunabot-space-0-5);
+  min-width: 0;
+  padding: var(--lunabot-space-2) var(--lunabot-space-3);
+  border-radius: var(--lunabot-radius-md);
+  background: var(--lunabot-surface-sunken);
+}
+
+.rooms-backstage-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--lunabot-space-2);
+  color: var(--lunabot-ink-2);
+  font-size: var(--lunabot-text-sm);
+}
+
+.rooms-backstage-text {
+  margin: 0;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+  font-size: var(--lunabot-text-md);
+}
+
+.rooms-backstage-attachments {
+  margin: 0;
+  color: var(--lunabot-ink-2);
+  font-size: var(--lunabot-text-sm);
+}

@@ -35,17 +35,22 @@ import type {
   QueueDeliveryStatus,
   QueuedMessageReceipt,
   QueueSnapshot,
+  RoomBackstageMessage,
+  RoomRequestNotice,
 } from "@lunabot/contracts/ipc";
 import {
   AGENT_RUNTIME_ATTENTION_LIMIT,
   AGENT_RUNTIME_TEXT_LIMIT,
   AGENT_RUNTIME_WORKING_ITEMS_LIMIT,
   isMessageReaction,
+  isRoomRequestNotice,
+  roomRequestNoticeItemType,
 } from "@lunabot/contracts/ipc";
 import { isNumber, isString } from "@lunabot/contracts/runtime-values";
 import { nativeMessage } from "../main/native-messages";
 import { LunaBotDatabase } from "./lunabot-database";
 import { isRecord } from "./protocol";
+import { roomIdForPath, roomSharedRoot } from "./room-scope";
 
 const MAX_ATTACHMENTS = INPUT_LIMITS.attachments;
 const MAX_FILE_BYTES = ATTACHMENT_LIMITS.fileBytes;
@@ -71,7 +76,8 @@ interface StoredMessage {
   sender:
     | { kind: "user" }
     | { kind: "bot"; botId: string }
-    | { kind: "routine"; routineId: string; runId: string; routineName: string; scheduledFor: string };
+    | { kind: "routine"; routineId: string; runId: string; routineName: string; scheduledFor: string }
+    | { kind: "system"; notice: RoomRequestNotice };
   text: string;
   attachments: StoredAttachment[];
   replyToMessageId: string | null;
@@ -171,14 +177,22 @@ export class MailboxStore {
   readonly #statePath: string;
   readonly #draftsRoot: string;
   readonly #transfersRoot: string;
+  readonly #roomsRoot: string;
   readonly #database: LunaBotDatabase;
   readonly #stagedGeneratedAttachments = new Map<string, StoredGeneratedAttachment>();
   #state: StoredState = structuredClone(EMPTY_STATE);
 
-  constructor(userDataPath: string, sharedRoot: string, database = new LunaBotDatabase(userDataPath)) {
+  // Rooms sit beside Shared under the Luna Bot root, so their transfers never reach the general Transfers folder.
+  constructor(
+    userDataPath: string,
+    sharedRoot: string,
+    database = new LunaBotDatabase(userDataPath),
+    roomsRoot = join(dirname(sharedRoot), "Rooms"),
+  ) {
     this.#statePath = join(userDataPath, "mailbox.json");
     this.#draftsRoot = join(userDataPath, "attachment-drafts");
     this.#transfersRoot = join(sharedRoot, "Transfers");
+    this.#roomsRoot = roomsRoot;
     this.#database = database;
   }
 
@@ -351,7 +365,9 @@ export class MailboxStore {
 
     const createdAt = new Date().toISOString();
     const messageId = randomUUID();
+    const transfersRoot = this.#transfersRootFor(recipients);
     const attachments = await this.#commitAttachments(
+      transfersRoot,
       messageId,
       input.sender,
       recipients,
@@ -400,7 +416,7 @@ export class MailboxStore {
           this.#state.drafts.push(draft);
         }
       }
-      await rm(join(this.#transfersRoot, messageId), { recursive: true, force: true });
+      await rm(join(transfersRoot, messageId), { recursive: true, force: true });
       throw error;
     }
     await Promise.all(drafts.map((draft) => rm(dirname(draft.path), { recursive: true, force: true })));
@@ -508,8 +524,15 @@ export class MailboxStore {
         messages.push({
           id: delivery.id,
           turnId: storedDelivery.turnId ?? undefined,
-          author: message.sender.kind === "bot" ? "agent" : "user",
-          source: message.sender.kind === "bot" ? "agent" : message.sender.kind === "routine" ? "routine" : "user",
+          author: message.sender.kind === "bot" ? "agent" : message.sender.kind === "system" ? "system" : "user",
+          source:
+            message.sender.kind === "bot"
+              ? "agent"
+              : message.sender.kind === "routine"
+                ? "routine"
+                : message.sender.kind === "system"
+                  ? "system"
+                  : "user",
           text: message.text,
           senderBotId: message.sender.kind === "bot" ? message.sender.botId : undefined,
           attachments: message.attachments.map(toAttachmentSummary),
@@ -555,7 +578,9 @@ export class MailboxStore {
               ? "agent-exchange"
               : message.sender.kind === "routine"
                 ? "routine"
-                : undefined,
+                : message.sender.kind === "system"
+                  ? roomRequestNoticeItemType(message.sender.notice)
+                  : undefined,
         });
       }
     }
@@ -627,6 +652,31 @@ export class MailboxStore {
     return parts.length >= 3 ? parts.at(-2) : undefined;
   }
 
+  // Messages whose author and every recipient are in the set, oldest first. Anything involving another bot or the user is left out.
+  roomMessages(botIds: ReadonlySet<string>): Omit<RoomBackstageMessage, "authorName">[] {
+    const recipientsByMessage = new Map<string, string[]>();
+    for (const delivery of this.#state.deliveries) {
+      const recipients = recipientsByMessage.get(delivery.messageId) ?? [];
+      recipients.push(delivery.recipientBotId);
+      recipientsByMessage.set(delivery.messageId, recipients);
+    }
+    const result: Omit<RoomBackstageMessage, "authorName">[] = [];
+    for (const message of this.#state.messages) {
+      if (message.sender.kind !== "bot" || !botIds.has(message.sender.botId)) continue;
+      const recipients = recipientsByMessage.get(message.id) ?? [];
+      if (recipients.length === 0 || !recipients.every((botId) => botIds.has(botId))) continue;
+      result.push({
+        id: message.id,
+        authorBotId: message.sender.botId,
+        recipientBotIds: recipients,
+        text: message.text,
+        attachmentNames: message.attachments.map((attachment) => attachment.name),
+        createdAt: message.createdAt,
+      });
+    }
+    return result;
+  }
+
   senderBotIdsForRecipient(botId: string): string[] {
     const result = new Set<string>();
     for (const delivery of this.#state.deliveries) {
@@ -692,7 +742,7 @@ export class MailboxStore {
       if (!keep) removedMessageIds.add(message.id);
       if (!keep) {
         for (const attachment of message.attachments) {
-          const transferRoot = transferRootForPath(this.#transfersRoot, attachment.path);
+          const transferRoot = transferRootForPath(this.#transfersRootForPath(attachment.path), attachment.path);
           if (transferRoot) removedTransferRoots.add(transferRoot);
         }
       }
@@ -716,7 +766,7 @@ export class MailboxStore {
         [
           ...removedTransferRoots,
           ...removedGenerated
-            .map((attachment) => generatedRootForPath(this.#transfersRoot, attachment.path))
+            .map((attachment) => generatedRootForPath(this.#transfersRootForPath(attachment.path), attachment.path))
             .filter((path): path is string => path !== null),
         ],
         true,
@@ -848,13 +898,15 @@ export class MailboxStore {
     let newAttachmentPaths: string[] = [];
     try {
       const keptAttachments = message.attachments.filter((attachment) => keepIds.has(attachment.id));
+      const editRecipientIds = this.#state.deliveries
+        .filter((candidate) => candidate.messageId === message.id)
+        .map((candidate) => candidate.recipientBotId);
       const committedDrafts = draftAttachmentPaths.length
         ? await this.#commitAttachments(
+            this.#transfersRootFor(editRecipientIds),
             `${message.id}-edit-${randomUUID()}`,
             message.sender,
-            this.#state.deliveries
-              .filter((candidate) => candidate.messageId === message.id)
-              .map((candidate) => candidate.recipientBotId),
+            editRecipientIds,
             message.id,
             new Date().toISOString(),
             draftAttachmentPaths,
@@ -947,10 +999,10 @@ export class MailboxStore {
     if (draft) return resolveManagedAttachment(this.#draftsRoot, draft);
     for (const message of this.#state.messages) {
       const attachment = message.attachments.find((candidate) => candidate.id === id);
-      if (attachment) return resolveManagedAttachment(this.#transfersRoot, attachment);
+      if (attachment) return resolveManagedAttachment(this.#transfersRootForPath(attachment.path), attachment);
     }
     const generated = this.#state.generatedAttachments.find((candidate) => candidate.id === id);
-    if (generated) return resolveManagedAttachment(this.#transfersRoot, generated);
+    if (generated) return resolveManagedAttachment(this.#transfersRootForPath(generated.path), generated);
     return null;
   }
 
@@ -959,7 +1011,7 @@ export class MailboxStore {
     if (!delivery) throw new Error(`Unknown delivery: ${deliveryId}`);
     const message = this.#requireMessage(delivery.messageId);
     for (const attachment of message.attachments) {
-      const resolved = await resolveManagedAttachment(this.#transfersRoot, attachment);
+      const resolved = await resolveManagedAttachment(this.#transfersRootForPath(attachment.path), attachment);
       if (!resolved) throw new Error(`Managed attachment is missing or has changed: ${attachment.name}`);
     }
   }
@@ -988,7 +1040,7 @@ export class MailboxStore {
     const entries = sources.map((source) => {
       const id = randomUUID();
       const name = uniqueName(sanitizeName(source.path), usedNames);
-      const generatedRoot = join(this.#transfersRoot, "generated", id);
+      const generatedRoot = join(this.#transfersRootForOwner(input.ownerBotId), "generated", id);
       return { id, name, source, generatedRoot, targetPath: join(generatedRoot, name) };
     });
     const storedIds = new Set<string>(entries.map((entry) => entry.id));
@@ -1071,7 +1123,7 @@ export class MailboxStore {
 
     for (const id of ids) this.#stagedGeneratedAttachments.delete(id);
     const generatedRoots = removed
-      .map((attachment) => generatedRootForPath(this.#transfersRoot, attachment.path))
+      .map((attachment) => generatedRootForPath(this.#transfersRootForPath(attachment.path), attachment.path))
       .filter((path): path is string => path !== null);
     await Promise.allSettled(generatedRoots.map((path) => rm(path, { recursive: true, force: true })));
   }
@@ -1096,7 +1148,7 @@ export class MailboxStore {
 
     const name = sanitizeName(input.name ?? (source ? basename(source.path) : "generated-image.png"));
     const metadata = attachmentMetadata(name, input.mimeType);
-    const generatedRoot = join(this.#transfersRoot, "generated", id);
+    const generatedRoot = join(this.#transfersRootForOwner(input.ownerBotId), "generated", id);
     const targetPath = join(generatedRoot, name);
     await mkdir(generatedRoot, { recursive: true, mode: 0o700 });
     try {
@@ -1146,7 +1198,7 @@ export class MailboxStore {
     const files: ExportedAttachmentFile[] = [];
     for (const [messageIndex, message] of this.#state.messages.entries()) {
       for (const attachment of message.attachments) {
-        const resolved = await resolveManagedAttachment(this.#transfersRoot, attachment);
+        const resolved = await resolveManagedAttachment(this.#transfersRootForPath(attachment.path), attachment);
         if (!resolved) continue;
         files.push({
           sourcePath: resolved.path,
@@ -1159,7 +1211,7 @@ export class MailboxStore {
       }
     }
     for (const attachment of this.#state.generatedAttachments) {
-      const resolved = await resolveManagedAttachment(this.#transfersRoot, attachment);
+      const resolved = await resolveManagedAttachment(this.#transfersRootForPath(attachment.path), attachment);
       if (!resolved) continue;
       files.push({
         sourcePath: resolved.path,
@@ -1239,7 +1291,26 @@ export class MailboxStore {
     };
   }
 
+  // A message must stay inside one closed room or among general agents, so its files live in exactly one Transfers root.
+  #transfersRootFor(botIds: readonly string[]): string {
+    const memberships = this.#database.roomMemberships();
+    const roomIds = new Set(botIds.map((botId) => memberships.get(botId)?.roomId ?? null));
+    if (roomIds.size > 1) throw new Error("Choose recipients from one room or from general agents.");
+    const [roomId] = roomIds;
+    return roomId ? join(roomSharedRoot(this.#roomsRoot, roomId), "Transfers") : this.#transfersRoot;
+  }
+
+  #transfersRootForOwner(ownerBotId: string | undefined): string {
+    return this.#transfersRootFor(ownerBotId ? [ownerBotId] : []);
+  }
+
+  #transfersRootForPath(path: string): string {
+    const roomId = roomIdForPath(this.#roomsRoot, path);
+    return roomId ? join(roomSharedRoot(this.#roomsRoot, roomId), "Transfers") : this.#transfersRoot;
+  }
+
   async #commitAttachments(
+    transfersRoot: string,
     transferId: string,
     sender: StoredMessage["sender"],
     recipientBotIds: string[],
@@ -1249,8 +1320,8 @@ export class MailboxStore {
   ): Promise<StoredAttachment[]> {
     if (sourcePaths.length === 0) return [];
     const inspected = await Promise.all(sourcePaths.map(inspectSource));
-    const temporaryRoot = join(this.#transfersRoot, `.tmp-${transferId}`);
-    const finalRoot = join(this.#transfersRoot, transferId);
+    const temporaryRoot = join(transfersRoot, `.tmp-${transferId}`);
+    const finalRoot = join(transfersRoot, transferId);
     await mkdir(temporaryRoot, { recursive: true, mode: 0o700 });
     const usedNames = new Set<string>();
     try {
@@ -1562,7 +1633,8 @@ function isStoredMessage(value: unknown): value is StoredMessage {
         isString(value.sender.routineId) &&
         isString(value.sender.runId) &&
         isString(value.sender.routineName) &&
-        isString(value.sender.scheduledFor))) &&
+        isString(value.sender.scheduledFor)) ||
+      (value.sender.kind === "system" && isRoomRequestNotice(value.sender.notice))) &&
     isString(value.text) &&
     Array.isArray(value.attachments) &&
     value.attachments.every(isStoredAttachment) &&

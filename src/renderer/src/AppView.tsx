@@ -1,8 +1,12 @@
-import { createMemo, Loading, lazy, Show } from "solid-js";
+import { createMemo, createSignal, Loading, lazy, Show } from "solid-js";
 import { useAppController } from "./App";
+import { toBotProfile } from "./app-message-projection";
 import { Conversation } from "./components/Conversation";
 import { FIRST_BOT_SUGGESTIONS, FirstBotSetup } from "./components/FirstBotSetup";
 import { PanelResizer, savePanelWidth } from "./components/PanelResizer";
+import { CreateRoomDialog } from "./components/rooms/CreateRoomDialog";
+import { RoomsSidebar } from "./components/rooms/RoomsSidebar";
+import { RoomView } from "./components/rooms/RoomView";
 import { Sidebar } from "./components/Sidebar";
 import { t } from "./i18n";
 import { fallbackDesktopPlatform, platformLayout } from "./platform-layout";
@@ -55,6 +59,9 @@ export function AppView() {
     selectBot,
     openLunaBotSetup,
     cancelBotSetup,
+    openNewBotFromRoomRequest,
+    roomsStore,
+    roomRequestCreation,
     editBot,
     duplicateBot,
     duplicatingBotIds,
@@ -126,6 +133,9 @@ export function AppView() {
     onToggle: () => (leftPanelCompact() ? expandSidebar() : setSidebarCollapsed(true)),
   });
 
+  const [createRoomOpen, setCreateRoomOpen] = createSignal(false);
+  const roomBots = createMemo(() => botList().map((bot) => ({ id: bot.id, name: bot.name, title: bot.title })));
+
   const activePrompt = createMemo(() => {
     const bot = activeBot();
     const event = bot ? pendingPrompts()[bot.id] : undefined;
@@ -137,6 +147,88 @@ export function AppView() {
     const event = bot ? pendingPrompts()[bot.id] : undefined;
     return event?.type === "browser-takeover-requested" ? event.request : undefined;
   });
+
+  // In a room the conversation lists the room's own bots; otherwise it lists the general bots.
+  const conversationBots = () => {
+    const roomId = roomsStore.selectedRoomId();
+    return roomId ? roomsStore.profiles(roomId).map(toBotProfile) : botList();
+  };
+
+  // An archived room keeps its conversation readable, but its composer stays locked.
+  const composerLockedReason = () => {
+    const roomId = roomsStore.selectedRoomId();
+    const room = roomId ? roomsStore.rooms().find((item) => item.id === roomId) : undefined;
+    return room?.status === "archived" ? t("rooms.view.composerArchived") : undefined;
+  };
+
+  // One conversation serves both views: general bots, or a room's manager with its composer.
+  const renderConversation = () => (
+    <Conversation
+      agentStatus={agentStatus()}
+      composerLockedReason={composerLockedReason()}
+      providerRuntimeStatuses={providerRuntimeDownloadsAvailable() ? providerRuntimeStatuses() : undefined}
+      onDownloadProvider={providerRuntimeDownloadsAvailable() ? downloadProviderRuntime : undefined}
+      onCancelProviderDownload={providerRuntimeDownloadsAvailable() ? cancelProviderRuntimeDownload : undefined}
+      onConnectProvider={
+        providerRuntimeDownloadsAvailable()
+          ? (provider) =>
+              provider === "codex" ? connectChatGPT() : provider === "claude" ? connectClaude() : connectGrok()
+          : undefined
+      }
+      bot={activeBot()}
+      bots={conversationBots()}
+      availableRoutineIds={activeRoutineIds()}
+      modelOptions={modelOptions()}
+      messages={activeMessages()}
+      messageReferences={activeBot() ? (conversationReferences()[activeBot()?.id ?? ""] ?? {}) : {}}
+      unreadCount={activeBot() ? (conversationReads()[activeBot()?.id ?? ""]?.unreadCount ?? 0) : 0}
+      firstUnreadMessageId={
+        activeBot() ? (conversationReads()[activeBot()?.id ?? ""]?.firstUnreadMessageId ?? null) : null
+      }
+      loaded={activeBot() ? conversationLoaded()[activeBot()?.id ?? ""] === true : false}
+      hasOlder={activeBot() ? (conversationPages()[activeBot()?.id ?? ""]?.hasOlder ?? false) : false}
+      discontinuous={activeBot() ? conversationWindowModes()[activeBot()?.id ?? ""] === "around" : false}
+      loadingOlder={activeBot() ? conversationOlderLoading()[activeBot()?.id ?? ""] === true : false}
+      olderError={activeBot() ? (conversationOlderErrors()[activeBot()?.id ?? ""] ?? null) : null}
+      queue={activeQueue()}
+      browserTabs={browserTabs()}
+      activeBrowserTabId={activeBrowserTabId()}
+      browserVisibilitySuspended={browserVisibilitySuspended()}
+      browserControlState={browserControlState()}
+      browserEnabled={!appProps.landingPreview}
+      prompt={activePrompt()}
+      approval={activeBot() ? pendingApprovals()[activeBot()?.id ?? ""] : undefined}
+      browserTakeover={activeBrowserTakeover()}
+      activeTurnId={activeBot() ? activeTurns()[activeBot()?.id ?? ""] : null}
+      globalOverlayOpen={globalSearchOpen() || appSettingsOpen()}
+      settingsRequest={settingsRequest()}
+      messageFocusRequest={messageFocusRequest()}
+      onSelectAgent={selectBot}
+      onUpdateBot={updateBot}
+      onSetAgentAvatar={setAgentAvatar}
+      onSendMessage={sendMessage}
+      onMarkRead={() => markAgentMessagesRead()}
+      onLoadOlder={() => void loadOlderAgentMessages()}
+      onLoadLatest={() => (activeBot() ? loadLatestAgentMessages(activeBot()?.id ?? "") : Promise.resolve())}
+      onSearchMessages={(query) =>
+        activeBot() ? searchAgentMessages(activeBot()?.id ?? "", query) : Promise.resolve({ messageIds: [], total: 0 })
+      }
+      onOpenSearchMessage={(messageId) =>
+        activeBot() ? openAgentMessage(activeBot()?.id ?? "", messageId) : Promise.resolve()
+      }
+      onAnswerPrompt={answerPrompt}
+      onPromptResolutionPresented={presentPromptResolution}
+      onRespondToApproval={respondToApproval}
+      onRespondToBrowserTakeover={respondToBrowserTakeover}
+      onCancelQueuedMessage={cancelQueuedMessage}
+      onSteerQueuedMessage={steerQueuedMessage}
+      onUpdateQueuedMessage={updateQueuedMessage}
+      onReorderQueue={reorderQueue}
+      onActivateBrowserTab={activateBrowserTab}
+      onCloseBrowserTab={closeBrowserTab}
+      onStop={stopActiveTurn}
+    />
+  );
 
   return (
     <div
@@ -164,6 +256,8 @@ export function AppView() {
         onReorderPinned={reorderPinnedSidebarItems}
         onSelectBot={selectBot}
         onCreateBot={openLunaBotSetup}
+        onCreateRoom={() => setCreateRoomOpen(true)}
+        roomsSection={<RoomsSidebar store={roomsStore} compact={leftPanelCompact()} />}
         onEditBot={editBot}
         duplicateSupported={true}
         duplicatingBotIds={duplicatingBotIds()}
@@ -235,74 +329,28 @@ export function AppView() {
           onCancel={botList().length > 0 ? cancelBotSetup : undefined}
         />
       </Show>
-      <Show when={!botSetupOpen()}>
-        <Conversation
-          agentStatus={agentStatus()}
-          providerRuntimeStatuses={providerRuntimeDownloadsAvailable() ? providerRuntimeStatuses() : undefined}
-          onDownloadProvider={providerRuntimeDownloadsAvailable() ? downloadProviderRuntime : undefined}
-          onCancelProviderDownload={providerRuntimeDownloadsAvailable() ? cancelProviderRuntimeDownload : undefined}
-          onConnectProvider={
-            providerRuntimeDownloadsAvailable()
-              ? (provider) =>
-                  provider === "codex" ? connectChatGPT() : provider === "claude" ? connectClaude() : connectGrok()
-              : undefined
-          }
-          bot={activeBot()}
-          bots={botList()}
-          availableRoutineIds={activeRoutineIds()}
-          modelOptions={modelOptions()}
-          messages={activeMessages()}
-          messageReferences={activeBot() ? (conversationReferences()[activeBot()?.id ?? ""] ?? {}) : {}}
-          unreadCount={activeBot() ? (conversationReads()[activeBot()?.id ?? ""]?.unreadCount ?? 0) : 0}
-          firstUnreadMessageId={
-            activeBot() ? (conversationReads()[activeBot()?.id ?? ""]?.firstUnreadMessageId ?? null) : null
-          }
-          loaded={activeBot() ? conversationLoaded()[activeBot()?.id ?? ""] === true : false}
-          hasOlder={activeBot() ? (conversationPages()[activeBot()?.id ?? ""]?.hasOlder ?? false) : false}
-          discontinuous={activeBot() ? conversationWindowModes()[activeBot()?.id ?? ""] === "around" : false}
-          loadingOlder={activeBot() ? conversationOlderLoading()[activeBot()?.id ?? ""] === true : false}
-          olderError={activeBot() ? (conversationOlderErrors()[activeBot()?.id ?? ""] ?? null) : null}
-          queue={activeQueue()}
-          browserTabs={browserTabs()}
-          activeBrowserTabId={activeBrowserTabId()}
-          browserVisibilitySuspended={browserVisibilitySuspended()}
-          browserControlState={browserControlState()}
-          browserEnabled={!appProps.landingPreview}
-          prompt={activePrompt()}
-          approval={activeBot() ? pendingApprovals()[activeBot()?.id ?? ""] : undefined}
-          browserTakeover={activeBrowserTakeover()}
-          activeTurnId={activeBot() ? activeTurns()[activeBot()?.id ?? ""] : null}
-          globalOverlayOpen={globalSearchOpen() || appSettingsOpen()}
-          settingsRequest={settingsRequest()}
-          messageFocusRequest={messageFocusRequest()}
-          onSelectAgent={selectBot}
-          onUpdateBot={updateBot}
-          onSetAgentAvatar={setAgentAvatar}
-          onSendMessage={sendMessage}
-          onMarkRead={() => markAgentMessagesRead()}
-          onLoadOlder={() => void loadOlderAgentMessages()}
-          onLoadLatest={() => (activeBot() ? loadLatestAgentMessages(activeBot()?.id ?? "") : Promise.resolve())}
-          onSearchMessages={(query) =>
-            activeBot()
-              ? searchAgentMessages(activeBot()?.id ?? "", query)
-              : Promise.resolve({ messageIds: [], total: 0 })
-          }
-          onOpenSearchMessage={(messageId) =>
-            activeBot() ? openAgentMessage(activeBot()?.id ?? "", messageId) : Promise.resolve()
-          }
-          onAnswerPrompt={answerPrompt}
-          onPromptResolutionPresented={presentPromptResolution}
-          onRespondToApproval={respondToApproval}
-          onRespondToBrowserTakeover={respondToBrowserTakeover}
-          onCancelQueuedMessage={cancelQueuedMessage}
-          onSteerQueuedMessage={steerQueuedMessage}
-          onUpdateQueuedMessage={updateQueuedMessage}
-          onReorderQueue={reorderQueue}
-          onActivateBrowserTab={activateBrowserTab}
-          onCloseBrowserTab={closeBrowserTab}
-          onStop={stopActiveTurn}
-        />
+      <CreateRoomDialog
+        open={createRoomOpen()}
+        bots={roomBots()}
+        onOpenChange={setCreateRoomOpen}
+        onCreated={(room) => {
+          setCreateRoomOpen(false);
+          roomsStore.openRoom(room.id);
+        }}
+      />
+      <Show when={!botSetupOpen() && roomsStore.selectedRoomId()}>
+        {(roomId) => (
+          <RoomView
+            store={roomsStore}
+            roomId={roomId()}
+            nameOfBot={(botId) => botList().find((bot) => bot.id === botId)?.name}
+            creatingRequestId={roomRequestCreation()?.requestId ?? null}
+            onCreateBotForRequest={openNewBotFromRoomRequest}
+            renderConversation={renderConversation}
+          />
+        )}
       </Show>
+      <Show when={!botSetupOpen() && !roomsStore.selectedRoomId()}>{renderConversation()}</Show>
       <WorkspaceOverlays />
     </div>
   );

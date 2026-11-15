@@ -19,6 +19,7 @@ import { z } from "zod";
 import { nativeMessage } from "../main/native-messages";
 import type { AgentProvider } from "./agent-client";
 import type { ClaudeCliInfo } from "./cli";
+import { LUNABOT_ROOM_NAMESPACE } from "./lunabot-room-tools";
 import {
   type AccountReadResult,
   type AppServerNotification,
@@ -51,6 +52,7 @@ interface ThreadConfig {
   developerInstructions: string;
   additionalDirectories: string[];
   persistSession: boolean;
+  roomManagerTools: boolean;
 }
 
 interface ActiveTurn {
@@ -323,7 +325,10 @@ export class ClaudeAgentClient extends EventEmitter<ClientEvents> {
       }
       return this.#requestUserInput(threadId, toolInput, options.toolUseID ?? randomUUID());
     };
-    const mcpServers = this.#createLunaBotServers(threadId);
+    const mcpServers = {
+      ...this.#createLunaBotServers(threadId),
+      ...(config.roomManagerTools ? { lunabot_room: this.#createRoomManagerServer(threadId) } : {}),
+    };
     const claudeQuery = this.#createQuery({
       prompt: input,
       options: {
@@ -569,6 +574,8 @@ export class ClaudeAgentClient extends EventEmitter<ClientEvents> {
     return { thread: { id: threadId, turns } };
   }
 
+  // Claude does not read thread/start dynamicTools. Its tools are in-process MCP servers that forward each call as
+  // item/tool/call to AgentService. Codex and Grok get the same namespaces from dynamicTools, so this list must stay in sync.
   #createLunaBotServers(threadId: string) {
     const call = (namespace: string, name: string, args: unknown) =>
       this.#callDynamicTool(threadId, namespace, name, args);
@@ -709,6 +716,54 @@ export class ClaudeAgentClient extends EventEmitter<ClientEvents> {
     };
   }
 
+  // Built only when AgentService lists the lunabot_room namespace for this thread (the active room manager).
+  // RoomService checks the caller again on every call.
+  #createRoomManagerServer(threadId: string) {
+    const call = (name: string, args: unknown) => this.#callDynamicTool(threadId, LUNABOT_ROOM_NAMESPACE, name, args);
+    return createSdkMcpServer({
+      name: LUNABOT_ROOM_NAMESPACE,
+      version: "0.1.0",
+      tools: [
+        tool("room_members", "List the active members of your room.", {}, (args) => call("room_members", args)),
+        tool(
+          "room_catalog",
+          "List general agents that could be hired into your room. Use their botId to request a hire.",
+          {},
+          (args) => call("room_catalog", args),
+        ),
+        tool(
+          "request_hire",
+          "Ask the user to hire a general agent into your room. Nothing changes until the user approves.",
+          {
+            botId: z.string().min(1).max(INPUT_LIMITS.identifier),
+            reason: z.string().min(1).max(1_000),
+          },
+          (args) => call("request_hire", args),
+        ),
+        tool(
+          "request_new_bot",
+          "Ask the user to create a new general agent that your room needs. The user creates it; then you can request a hire.",
+          {
+            name: z.string().min(1).max(80),
+            title: z.string().max(120).optional(),
+            description: z.string().max(2_000).optional(),
+            reason: z.string().min(1).max(1_000),
+          },
+          (args) => call("request_new_bot", args),
+        ),
+        tool(
+          "request_dismiss",
+          "Ask the user to dismiss an active member from your room. Nothing changes until the user approves.",
+          {
+            botId: z.string().min(1).max(INPUT_LIMITS.identifier),
+            reason: z.string().min(1).max(1_000),
+          },
+          (args) => call("request_dismiss", args),
+        ),
+      ],
+    });
+  }
+
   async #callDynamicTool(threadId: string, namespace: string, name: string, args: unknown): Promise<CallToolResult> {
     const runtime = this.#requireThread(threadId);
     const result = await this.#callServerRequest("item/tool/call", {
@@ -832,6 +887,12 @@ function readThreadConfig(params: unknown): ThreadConfig {
     developerInstructions: getString(params, "developerInstructions") ?? "",
     additionalDirectories: [...new Set([cwd, ...roots])],
     persistSession: !isRecord(params) || params.persistSession !== false,
+    roomManagerTools:
+      isRecord(params) &&
+      Array.isArray(params.dynamicTools) &&
+      params.dynamicTools.some(
+        (entry) => isRecord(entry) && entry.type === "namespace" && entry.name === LUNABOT_ROOM_NAMESPACE,
+      ),
   };
 }
 

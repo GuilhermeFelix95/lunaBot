@@ -1,5 +1,6 @@
 import { INPUT_LIMITS } from "./input-limits";
 import type { BrowserControlState, BrowserTab } from "./ipc-browser";
+import type { RoomRequestNotice } from "./ipc-rooms";
 import { isBoolean, isDynamicRecord, isNumber, isOneOf, isString } from "./runtime-values";
 
 export type AgentPhase = "idle" | "starting" | "ready" | "restarting" | "blocked" | "stopped";
@@ -584,7 +585,8 @@ export interface QueueDelivery {
   sender:
     | { kind: "user" }
     | { kind: "bot"; botId: string }
-    | { kind: "routine"; routineId: string; runId: string; routineName: string; scheduledFor: string };
+    | { kind: "routine"; routineId: string; runId: string; routineName: string; scheduledFor: string }
+    | { kind: "system"; notice: RoomRequestNotice };
   text: string;
   attachments: AttachmentSummary[];
   replyToMessageId: string | null;
@@ -1194,7 +1196,7 @@ export interface RespondToApprovalInput {
   decision: "accept" | "decline";
 }
 
-export type AgentTurnOrigin = "user" | "routine" | "bot" | "unknown";
+export type AgentTurnOrigin = "user" | "routine" | "bot" | "system" | "unknown";
 
 export type AgentEvent =
   | { type: "status"; status: AgentStatus }
@@ -1623,7 +1625,7 @@ function isBoundedString(value: unknown, maximum: number): value is string {
 }
 
 function isAgentTurnOrigin(value: unknown): value is AgentTurnOrigin {
-  return value === "user" || value === "routine" || value === "bot" || value === "unknown";
+  return value === "user" || value === "routine" || value === "bot" || value === "system" || value === "unknown";
 }
 
 export function isSidebarLayoutSnapshot(value: unknown): value is SidebarLayoutSnapshot {

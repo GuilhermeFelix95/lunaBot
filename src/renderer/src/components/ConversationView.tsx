@@ -213,6 +213,8 @@ export interface ConversationProps {
   loadingOlder?: boolean;
   olderError?: string | null;
   activeTurnId: string | null | undefined;
+  /** Why the composer cannot send right now, such as an archived room. It replaces the placeholder. */
+  composerLockedReason?: string;
   globalOverlayOpen: boolean;
   settingsRequest: { botId: string; nonce: number } | null;
   messageFocusRequest: { botId: string; messageId: string; nonce: number } | null;
@@ -3245,6 +3247,7 @@ export function ConversationComposer() {
     voicePhase,
     voiceModelProgress,
   } = useConversationViewScope();
+  const composerReady = () => agentReady() && !props.composerLockedReason;
   return (
     <Show when={!props.prompt && !props.approval && !props.browserTakeover}>
       <div class="composer-wrap">
@@ -3349,15 +3352,17 @@ export function ConversationComposer() {
               bots={props.bots}
               attachments={currentDraft().attachments}
               value={currentDraft().text}
-              disabled={submitting() || selectionSending() || voicePhase() === "transcribing" || !agentReady()}
+              disabled={submitting() || selectionSending() || voicePhase() === "transcribing" || !composerReady()}
               placeholder={
                 !agentReady()
                   ? t("conversation.view.completeSetup")
-                  : replyTarget()
-                    ? t("conversation.view.replyPlaceholder")
-                    : t("conversation.view.messageBot", {
-                        name: props.bot?.name ?? t("conversation.common.agentNameLower"),
-                      })
+                  : props.composerLockedReason
+                    ? props.composerLockedReason
+                    : replyTarget()
+                      ? t("conversation.view.replyPlaceholder")
+                      : t("conversation.view.messageBot", {
+                          name: props.bot?.name ?? t("conversation.common.agentNameLower"),
+                        })
               }
               ariaLabel={t("conversation.view.messageBot", {
                 name: props.bot?.name ?? t("conversation.common.agentNameLower"),
@@ -3408,7 +3413,7 @@ export function ConversationComposer() {
                   submitting() ||
                   selectionSending() ||
                   voicePhase() === "transcribing" ||
-                  !agentReady()
+                  !composerReady()
                 }
               >
                 <PlusIcon />
@@ -3460,7 +3465,7 @@ export function ConversationComposer() {
                       voicePhase() === "requesting" ||
                       voicePhase() === "preparing" ||
                       voicePhase() === "transcribing" ||
-                      (voicePhase() === "idle" && (!props.bot || !agentReady()))
+                      (voicePhase() === "idle" && (!props.bot || !composerReady()))
                     }
                     onClick={() => void startVoiceRecording()}
                   >
@@ -3510,7 +3515,7 @@ export function ConversationComposer() {
                     disabled={
                       submitting() ||
                       selectionSending() ||
-                      !agentReady() ||
+                      !composerReady() ||
                       voicePhase() === "preparing" ||
                       voicePhase() === "requesting" ||
                       voicePhase() === "transcribing"

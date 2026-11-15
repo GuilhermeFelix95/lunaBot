@@ -5,6 +5,7 @@ import {
   type SidebarLayoutAction,
   type SidebarLayoutSnapshot,
 } from "@lunabot/contracts/ipc";
+import type { JSX } from "@solidjs/web";
 import { createEffect, createMemo, createSignal, For, onCleanup, onSettled, Show } from "solid-js";
 import type { BotProfile } from "../data";
 import { t } from "../i18n";
@@ -32,6 +33,7 @@ import {
   FolderPlus,
   IconButton,
   Input,
+  LayoutGrid,
   Pencil,
   Pin,
   PinOff,
@@ -54,6 +56,9 @@ interface SidebarProps {
   onReorderPinned: (items: SidebarPinnedItem[]) => void;
   onSelectBot: (botId: string) => void;
   onCreateBot: () => void;
+  onCreateRoom?: () => void;
+  /** Rooms section rendered above the bot list; the parent owns its state. */
+  roomsSection?: JSX.Element;
   onEditBot: (botId: string) => void;
   duplicateSupported?: boolean;
   duplicatingBotIds?: ReadonlySet<string>;
@@ -1627,6 +1632,21 @@ export function Sidebar(props: SidebarProps) {
           >
             <PlusIcon />
           </IconButton>
+          <Show when={props.onCreateRoom}>
+            {(createRoom) => (
+              <IconButton
+                size="md"
+                variant="ghost"
+                type="button"
+                class="sidebar-icon-button sidebar-new-room-button no-drag"
+                onClick={() => createRoom()()}
+                label={t("rooms.sidebar.create")}
+                tooltip=""
+              >
+                <LayoutGrid />
+              </IconButton>
+            )}
+          </Show>
           <Show when={props.onImportBot}>
             <IconButton
               size="md"
@@ -1693,6 +1713,7 @@ export function Sidebar(props: SidebarProps) {
         onScroll={() => updateScrollFade()}
       >
         <div class="bot-list-content">
+          <Show when={props.roomsSection}>{props.roomsSection}</Show>
           <Show
             when={resolvedPinnedItems().length > 0 || filteredBots().length > 0 || sectionEditor()?.kind === "create"}
             fallback={

@@ -19,12 +19,17 @@ import type {
   DynamicIslandAction,
   ProviderRuntimeSnapshot,
   QueueSnapshot,
+  RoomRequest,
   SidebarLayoutAction,
   SidebarLayoutSnapshot,
   UpdateBotInput,
   UpdateStatus,
 } from "@lunabot/contracts/ipc";
-import { ROUTINE_EVENT_ITEM_TYPE_PREFIX, ROUTINE_RUN_EVENT_ITEM_TYPE_PREFIX } from "@lunabot/contracts/ipc";
+import {
+  ROOM_REQUEST_NOTICE_ITEM_TYPE_PREFIX,
+  ROUTINE_EVENT_ITEM_TYPE_PREFIX,
+  ROUTINE_RUN_EVENT_ITEM_TYPE_PREFIX,
+} from "@lunabot/contracts/ipc";
 import {
   createContext,
   createEffect,
@@ -32,6 +37,7 @@ import {
   createSignal,
   createStore,
   flush,
+  onCleanup,
   onSettled,
   type ParentProps,
   useContext,
@@ -54,6 +60,8 @@ import { isAppSettingsShortcut } from "./app-settings-shortcut";
 import { playCompletionSoundForAgentEvent } from "./completion-sound";
 import { createFirstBotDraft, type FirstBotDraft } from "./components/FirstBotSetup";
 import { readPanelWidth } from "./components/PanelResizer";
+import { roomIdOfBot, roomManager } from "./components/rooms/room-model";
+import { createRoomsStore } from "./components/rooms/rooms-store";
 import type { SidebarAgentState } from "./components/Sidebar";
 import { Toaster, toast } from "./components/ui";
 import type { BotMessage, BotProfile } from "./data";
@@ -115,10 +123,12 @@ const FALLBACK_PROVIDER_RUNTIMES: ProviderRuntimeSnapshot = {
 type PromptEvent = Extract<AgentEvent, { type: "prompt" }>;
 type BrowserTakeoverEvent = Extract<AgentEvent, { type: "browser-takeover-requested" }>;
 
-function isRoutineEventItem(message: { itemType?: string }): boolean {
+// Routine events and room request notes show in the chat, but they are not new messages to read.
+function isEventNoteItem(message: { itemType?: string }): boolean {
   return (
     message.itemType?.startsWith(ROUTINE_EVENT_ITEM_TYPE_PREFIX) === true ||
-    message.itemType?.startsWith(ROUTINE_RUN_EVENT_ITEM_TYPE_PREFIX) === true
+    message.itemType?.startsWith(ROUTINE_RUN_EVENT_ITEM_TYPE_PREFIX) === true ||
+    message.itemType?.startsWith(ROOM_REQUEST_NOTICE_ITEM_TYPE_PREFIX) === true
   );
 }
 
@@ -137,7 +147,7 @@ function preserveKnownAgentUnread(
         message.author !== "you" &&
         message.itemType !== "commentary" &&
         message.itemType !== "agent_attachment" &&
-        !isRoutineEventItem(message) &&
+        !isEventNoteItem(message) &&
         !message.id.startsWith("thinking:") &&
         !message.id.startsWith("ui-"),
     );
@@ -272,6 +282,8 @@ export function createAppController(props: AppProps = {}) {
   const [botSetupDraft, setBotSetupDraft] = createSignal<FirstBotDraft>(createFirstBotDraft());
   const [botSetupError, setBotSetupError] = createSignal<string | null>(null);
   const [creatingAgent, setCreatingAgent] = createSignal(false);
+  const roomsStore = createRoomsStore();
+  onCleanup(roomsStore.start());
   const [settingsRequest, setSettingsRequest] = createSignal<{
     botId: string;
     nonce: number;
@@ -428,7 +440,32 @@ export function createAppController(props: AppProps = {}) {
     return () => window.removeEventListener("resize", updateResponsiveSidebar);
   });
 
+  // Room bots never appear in botList, so a room's manager is resolved from the room's own profiles.
+  const [roomRequestCreation, setRoomRequestCreation] = createSignal<{ requestId: string; roomId: string } | null>(
+    null,
+  );
+  const selectedRoomManagerId = createMemo(() => {
+    const roomId = roomsStore.selectedRoomId();
+    const room = roomId ? roomsStore.rooms().find((item) => item.id === roomId) : undefined;
+    return room ? (roomManager(room)?.botId ?? null) : null;
+  });
+  const roomManagerProfile = createMemo(() => {
+    const roomId = roomsStore.selectedRoomId();
+    const managerId = selectedRoomManagerId();
+    if (!roomId || !managerId) return undefined;
+    const stored = roomsStore.profiles(roomId).find((bot) => bot.id === managerId);
+    return stored ? toBotProfile(stored) : undefined;
+  });
+  // The shared conversation loads and sends through activeBotId, so it follows the room's manager.
+  createEffect(
+    () => ({ managerId: selectedRoomManagerId(), currentId: activeBotId() }),
+    ({ managerId }) => {
+      if (managerId && activeBotId() !== managerId) setActiveBotId(managerId);
+    },
+  );
+
   const activeBot = createMemo(() => {
+    if (roomsStore.selectedRoomId()) return roomManagerProfile();
     return botList().find((bot) => bot.id === activeBotId()) ?? botList()[0];
   });
   const activeMessages = createMemo(() => {
@@ -641,7 +678,7 @@ export function createAppController(props: AppProps = {}) {
                   message.author !== "user" &&
                   message.itemType !== "commentary" &&
                   message.itemType !== "agent_attachment" &&
-                  !isRoutineEventItem(message),
+                  !isEventNoteItem(message),
               );
             if (latestIncomingMessage) autoMarkAgentMessageRead(botId, latestIncomingMessage.id);
           }
@@ -735,7 +772,7 @@ export function createAppController(props: AppProps = {}) {
                     message.author !== "user" &&
                     message.itemType !== "commentary" &&
                     message.itemType !== "agent_attachment" &&
-                    !isRoutineEventItem(message),
+                    !isEventNoteItem(message),
                 )
             : undefined;
           if (pageApplied && latestIncomingMessage) {
@@ -987,7 +1024,7 @@ export function createAppController(props: AppProps = {}) {
             message.author !== "you" &&
             message.itemType !== "commentary" &&
             message.itemType !== "agent_attachment" &&
-            !isRoutineEventItem(message) &&
+            !isEventNoteItem(message) &&
             !message.id.startsWith("thinking:") &&
             !message.id.startsWith("ui-"),
         )
@@ -1202,7 +1239,7 @@ export function createAppController(props: AppProps = {}) {
               message.author !== "user" &&
               message.itemType !== "commentary" &&
               message.itemType !== "agent_attachment" &&
-              !isRoutineEventItem(message),
+              !isEventNoteItem(message),
           )
       : undefined;
     if (latestIncomingMessage) {
@@ -1271,7 +1308,7 @@ export function createAppController(props: AppProps = {}) {
             message.author !== "user" &&
             message.itemType !== "commentary" &&
             message.itemType !== "agent_attachment" &&
-            !isRoutineEventItem(message),
+            !isEventNoteItem(message),
         );
       let retainedState: ConversationReadState | null = null;
       if (trackedAutoRead && trackedAutoRead.messageId === latestIncomingMessage?.id) {
@@ -1355,7 +1392,13 @@ export function createAppController(props: AppProps = {}) {
       setLiveMessages((current) => (current[newAgent.id] ? current : { ...current, [newAgent.id]: [] }));
       setConversationLoaded((current) => ({ ...current, [newAgent.id]: true }));
       setBotSetupOpen(false);
-      setActiveBotId(newAgent.id);
+      const link = roomRequestCreation();
+      if (link) {
+        await completeRoomRequest(link, newAgent);
+      } else {
+        roomsStore.selectRoom(null);
+        setActiveBotId(newAgent.id);
+      }
     } catch (error) {
       setBotSetupError(error instanceof Error ? error.message : t("misc.app.botCreateFailed"));
     } finally {
@@ -1363,8 +1406,15 @@ export function createAppController(props: AppProps = {}) {
     }
   }
 
+  // Answers the room's new_bot request with the bot just created. The backend tells the manager.
+  async function completeRoomRequest(link: { requestId: string; roomId: string }, bot: BotProfile) {
+    await roomsStore.resolveRequest(link.requestId, "approve", bot.id);
+    setRoomRequestCreation(null);
+  }
+
   function openLunaBotSetup() {
     if (botSetupOpen()) return;
+    setRoomRequestCreation(null);
     setBotSetupDraft(createFirstBotDraft());
     setBotSetupError(null);
     explicitlyOpenedAgentChatId = null;
@@ -1373,13 +1423,25 @@ export function createAppController(props: AppProps = {}) {
 
   function cancelBotSetup() {
     if (creatingAgent() || botList().length === 0) return;
+    setRoomRequestCreation(null);
     setBotSetupOpen(false);
     setBotSetupError(null);
     setBotSetupDraft(createFirstBotDraft());
   }
 
+  function openNewBotFromRoomRequest(request: RoomRequest) {
+    if (!request.profile) return;
+    setRoomRequestCreation({ requestId: request.id, roomId: request.roomId });
+    setBotSetupDraft({ ...createFirstBotDraft(), name: request.profile.name, purpose: request.profile.description });
+    setBotSetupError(null);
+    explicitlyOpenedAgentChatId = null;
+    setBotSetupOpen(true);
+  }
+
   function selectBot(botId: string) {
     if (botSetupOpen() && creatingAgent()) return;
+    roomsStore.selectRoom(null);
+    setRoomRequestCreation(null);
     const previousBotId = activeBotId();
     if (previousBotId && previousBotId !== botId) pruneInactiveAgentHistory(previousBotId);
     setBotSetupOpen(false);
@@ -1501,6 +1563,12 @@ export function createAppController(props: AppProps = {}) {
         botId,
         ...updates,
       });
+      // A room bot belongs to its room's profiles, not the general list. Adding it here would leak it into the sidebar.
+      const roomId = roomIdOfBot(roomsStore.rooms(), botId);
+      if (roomId) {
+        await roomsStore.refreshProfiles(roomId);
+        return;
+      }
       const next = toBotProfile(stored);
       setBotList((current) => {
         const existingIndex = current.findIndex((bot) => bot.id === botId);
@@ -1518,6 +1586,11 @@ export function createAppController(props: AppProps = {}) {
   async function setAgentAvatar(botId: string, image: AvatarImageInput | null): Promise<void> {
     try {
       const stored = await window.lunabot.agent.setAvatar({ botId, image });
+      const roomId = roomIdOfBot(roomsStore.rooms(), botId);
+      if (roomId) {
+        await roomsStore.refreshProfiles(roomId);
+        return;
+      }
       const next = toBotProfile(stored);
       setBotList((current) => {
         const existing = current.find((bot) => bot.id === botId);
@@ -2181,6 +2254,9 @@ export function createAppController(props: AppProps = {}) {
     selectBot,
     openLunaBotSetup,
     cancelBotSetup,
+    openNewBotFromRoomRequest,
+    roomsStore,
+    roomRequestCreation,
     editBot,
     duplicateBot,
     duplicatingBotIds,

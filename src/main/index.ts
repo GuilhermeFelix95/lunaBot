@@ -49,6 +49,8 @@ import { BotStore } from "../backend/bot-store";
 import { BrowserHost } from "../backend/browser-host";
 import { isCloseBrowserTabShortcut, isSelectAllShortcut, isToggleDevToolsShortcut } from "../backend/browser-shortcuts";
 import { MailboxStore } from "../backend/mailbox-store";
+import { botScope, browserPartitionForScope } from "../backend/room-scope";
+import { RoomService } from "../backend/room-service";
 import { SidebarLayoutStore } from "../backend/sidebar-layout-store";
 import { AgentInitializationGate } from "./agent-initialization";
 import { notificationForAgentEvent } from "./agent-notifications";
@@ -121,6 +123,7 @@ import {
   parseWindowCloseBehavior,
 } from "./ipc/app-inputs";
 import { parseBrowserBounds, parseBrowserNavigate, parseBrowserOpen, parseVisibility } from "./ipc/browser-inputs";
+import { parseCreateRoom, parseDismissRoomMember, parseResolveRoomRequest } from "./ipc/room-inputs";
 import { requireString } from "./ipc/validation";
 import { parseVoiceTranscription } from "./ipc/voice-inputs";
 import { MacHapticFeedback } from "./mac-haptic-feedback";
@@ -265,6 +268,7 @@ function registerIpcHandlers(
   voice: VoiceTranscriptionService,
   dynamicIsland: DynamicIslandWindowController,
   computerUseMacSetup: ComputerUseMacSetupWindowController,
+  rooms: RoomService,
 ): void {
   handleTrusted(IPC_CHANNELS.getAppInfo, (): AppInfo => {
     const platform = process.platform;
@@ -447,6 +451,35 @@ function registerIpcHandlers(
   });
   handleTrusted(IPC_CHANNELS.agentListBots, () => {
     return service.listBots();
+  });
+  handleTrusted(IPC_CHANNELS.roomsList, () => {
+    return rooms.listRooms();
+  });
+  handleTrusted(IPC_CHANNELS.roomsCreate, (input: unknown) => {
+    return rooms.createRoom(parseCreateRoom(input));
+  });
+  handleTrusted(IPC_CHANNELS.roomsArchive, (input: unknown) => {
+    return rooms.archiveRoom(requireString(input, "roomId", INPUT_LIMITS.identifier));
+  });
+  handleTrusted(IPC_CHANNELS.roomsReopen, (input: unknown) => {
+    return rooms.reopenRoom(requireString(input, "roomId", INPUT_LIMITS.identifier));
+  });
+  handleTrusted(IPC_CHANNELS.roomsDeleteForever, async (input: unknown) => {
+    await rooms.deleteRoomForever(requireString(input, "roomId", INPUT_LIMITS.identifier));
+  });
+  handleTrusted(IPC_CHANNELS.roomsDismissMember, (input: unknown) => {
+    const parsed = parseDismissRoomMember(input);
+    return rooms.dismissMember(parsed.roomId, parsed.botId);
+  });
+  handleTrusted(IPC_CHANNELS.roomsResolveRequest, (input: unknown) => {
+    const parsed = parseResolveRoomRequest(input);
+    return rooms.resolveRequest(parsed.requestId, parsed.decision, parsed.targetBotId);
+  });
+  handleTrusted(IPC_CHANNELS.roomsBackstage, (input: unknown) => {
+    return rooms.backstage(requireString(input, "roomId", INPUT_LIMITS.identifier));
+  });
+  handleTrusted(IPC_CHANNELS.roomsBotProfiles, (input: unknown) => {
+    return rooms.botProfiles(requireString(input, "roomId", INPUT_LIMITS.identifier));
   });
   handleTrusted(IPC_CHANNELS.agentGetSidebarLayout, (): Promise<SidebarLayoutSnapshot> => {
     return Promise.resolve(sidebarLayout.getSnapshot());
@@ -1093,6 +1126,16 @@ function forwardAgentEvent(event: AgentEvent): void {
   notification.show();
 }
 
+function forwardRoomsChanged(rooms: RoomService): void {
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+  sendToRenderer(mainWindow, IPC_CHANNELS.roomsChanged, rooms.listRooms());
+}
+
+function forwardRoomBackstageChanged(roomId: string): void {
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+  sendToRenderer(mainWindow, IPC_CHANNELS.roomsBackstageChanged, roomId);
+}
+
 function forwardBrowserDisplayState(state: BrowserDisplayState): void {
   for (const window of BrowserWindow.getAllWindows()) {
     sendToRenderer(window, IPC_CHANNELS.browserDisplayStateEvent, state);
@@ -1187,7 +1230,13 @@ if (!hasSingleInstanceLock) {
       mailboxStore = new MailboxStore(app.getPath("userData"), store.sharedRoot, store.database);
       await mailboxStore.initialize();
       configureApplicationProtocol();
-      browserHost = new BrowserHost(mainWindow, store.downloadsRoot, join(app.getPath("userData"), BROWSER_STATE_FILE));
+      browserHost = new BrowserHost(
+        mainWindow,
+        store.downloadsRoot,
+        join(app.getPath("userData"), BROWSER_STATE_FILE),
+        // A missing owner is a general agent, so it never resolves to a room partition.
+        (botId) => browserPartitionForScope(botScope(botId ?? "", store.database.roomMemberships())),
+      );
       await browserHost.restore();
       browserPictureInPicture = new BrowserPictureInPicture({
         mainWindow,
@@ -1255,7 +1304,14 @@ if (!hasSingleInstanceLock) {
         logDirectory: join(app.getPath("userData"), "logs", "update"),
         shipItDirectory: join(homedir(), "Library", "Caches", "app.lunabot.desktop.ShipIt"),
       });
-      service.on("event", (event) => forwardAgentEvent(event));
+      service.on("event", (event) => {
+        forwardAgentEvent(event);
+        if (event.type !== "queue-changed") return;
+        const roomId = store.database.roomMemberships().get(event.snapshot.botId)?.roomId;
+        if (roomId) forwardRoomBackstageChanged(roomId);
+      });
+      const rooms = new RoomService(store, service);
+      rooms.on("changed", () => forwardRoomsChanged(rooms));
       sidebarLayoutStore.on("changed", (layout) => forwardAgentEvent({ type: "sidebar-layout-changed", layout }));
       updateService.on("status", forwardUpdateStatus);
       updateService.start();
@@ -1276,6 +1332,7 @@ if (!hasSingleInstanceLock) {
         voiceTranscriptionService,
         dynamicIslandController,
         computerUseMacSetupController,
+        rooms,
       );
       configureApplicationMenu(service, updateService);
       await dynamicIslandController

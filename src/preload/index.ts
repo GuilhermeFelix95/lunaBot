@@ -38,6 +38,10 @@ import {
   type ProviderRuntimeSnapshot,
   type QueuedMessageReceipt,
   type QueueSnapshot,
+  type Room,
+  type RoomBackstageMessage,
+  type RoomMember,
+  type RoomRequest,
   type Routine,
   type RoutineRun,
   type SidebarLayoutSnapshot,
@@ -305,6 +309,88 @@ function isAgentModelList(value: unknown): value is AgentModelOption[] {
 
 function decodeBot(value: unknown): BotSummary {
   if (!isBotSummary(value)) throw new Error("Invalid agent response.");
+  return value;
+}
+
+function isRoomMember(value: unknown): value is RoomMember {
+  return (
+    isDynamicRecord(value) &&
+    isString(value.botId) &&
+    isString(value.name) &&
+    isOneOf(["manager", "member"] as const, value.role) &&
+    isOneOf(["active", "dismissed"] as const, value.status) &&
+    isString(value.addedAt) &&
+    nullableString(value.dismissedAt, "room member dismissal time")
+  );
+}
+
+function isRoomRequest(value: unknown): value is RoomRequest {
+  return (
+    isDynamicRecord(value) &&
+    isString(value.id) &&
+    isString(value.roomId) &&
+    isString(value.requestedByBotId) &&
+    isOneOf(["hire", "dismiss", "new_bot"] as const, value.kind) &&
+    (value.targetBotId === null || isString(value.targetBotId)) &&
+    (value.profile === null ||
+      (isDynamicRecord(value.profile) &&
+        isString(value.profile.name) &&
+        isString(value.profile.title) &&
+        isString(value.profile.description))) &&
+    isString(value.reason) &&
+    isOneOf(["pending", "rejected", "fulfilled"] as const, value.status) &&
+    nullableString(value.createdBotId, "room request bot ID") &&
+    isString(value.createdAt) &&
+    nullableString(value.resolvedAt, "room request resolution time")
+  );
+}
+
+function isRoom(value: unknown): value is Room {
+  return (
+    isDynamicRecord(value) &&
+    isString(value.id) &&
+    isString(value.name) &&
+    isOneOf(["active", "archived"] as const, value.status) &&
+    isOneOf(["exclusive", "shared"] as const, value.browserMode) &&
+    isString(value.createdAt) &&
+    isString(value.updatedAt) &&
+    nullableString(value.archivedAt, "room archive time") &&
+    Array.isArray(value.members) &&
+    value.members.every(isRoomMember) &&
+    Array.isArray(value.requests) &&
+    value.requests.every(isRoomRequest)
+  );
+}
+
+function decodeRoom(value: unknown): Room {
+  if (!isRoom(value)) throw new Error("Invalid room response.");
+  return value;
+}
+
+function decodeRooms(value: unknown): Room[] {
+  if (!Array.isArray(value) || !value.every(isRoom)) throw new Error("Invalid room list response.");
+  return value;
+}
+
+function isRoomBackstageMessage(value: unknown): value is RoomBackstageMessage {
+  return (
+    isDynamicRecord(value) &&
+    isString(value.id) &&
+    isString(value.authorBotId) &&
+    isString(value.authorName) &&
+    Array.isArray(value.recipientBotIds) &&
+    value.recipientBotIds.every(isString) &&
+    isString(value.text) &&
+    Array.isArray(value.attachmentNames) &&
+    value.attachmentNames.every(isString) &&
+    isString(value.createdAt)
+  );
+}
+
+function decodeRoomBackstage(value: unknown): RoomBackstageMessage[] {
+  if (!Array.isArray(value) || !value.every(isRoomBackstageMessage)) {
+    throw new Error("Invalid room backstage response.");
+  }
   return value;
 }
 
@@ -699,6 +785,29 @@ const lunabotApi: LunaBotDesktopApi = {
       const handler = (_event: Electron.IpcRendererEvent, event: Parameters<typeof listener>[0]) => listener(event);
       ipcRenderer.on(IPC_CHANNELS.agentEvent, handler);
       return () => ipcRenderer.removeListener(IPC_CHANNELS.agentEvent, handler);
+    },
+  },
+  rooms: {
+    list: () => invokeAgent(IPC_CHANNELS.roomsList, null, decodeRooms),
+    create: (input) => invokeAgent(IPC_CHANNELS.roomsCreate, input, decodeRoom),
+    archive: (roomId) => invokeAgent(IPC_CHANNELS.roomsArchive, roomId, decodeRoom),
+    reopen: (roomId) => invokeAgent(IPC_CHANNELS.roomsReopen, roomId, decodeRoom),
+    deleteForever: (roomId) => invokeAgent(IPC_CHANNELS.roomsDeleteForever, roomId, decodeVoid),
+    dismissMember: (input) => invokeAgent(IPC_CHANNELS.roomsDismissMember, input, decodeRoom),
+    resolveRequest: (input) => invokeAgent(IPC_CHANNELS.roomsResolveRequest, input, decodeRoom),
+    backstage: (roomId) => invokeAgent(IPC_CHANNELS.roomsBackstage, roomId, decodeRoomBackstage),
+    botProfiles: (roomId) => invokeAgent(IPC_CHANNELS.roomsBotProfiles, roomId, decodeBots),
+    onChanged: (listener) => {
+      const handler = (_event: Electron.IpcRendererEvent, rooms: unknown) => listener(decodeRooms(rooms));
+      ipcRenderer.on(IPC_CHANNELS.roomsChanged, handler);
+      return () => ipcRenderer.removeListener(IPC_CHANNELS.roomsChanged, handler);
+    },
+    onBackstageChanged: (listener) => {
+      const handler = (_event: Electron.IpcRendererEvent, roomId: unknown) => {
+        if (isString(roomId)) listener(roomId);
+      };
+      ipcRenderer.on(IPC_CHANNELS.roomsBackstageChanged, handler);
+      return () => ipcRenderer.removeListener(IPC_CHANNELS.roomsBackstageChanged, handler);
     },
   },
   browser: {

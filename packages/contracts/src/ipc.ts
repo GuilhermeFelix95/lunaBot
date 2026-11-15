@@ -5,4 +5,5 @@ export * from "./ipc-channels";
 export * from "./ipc-conversation";
 export * from "./ipc-desktop-apis";
 export * from "./ipc-dynamic-island";
+export * from "./ipc-rooms";
 export * from "./ipc-voice";
