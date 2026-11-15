@@ -4,6 +4,7 @@ import { createServer } from "node:net";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { prepareDevelopmentEnvironment } from "./prepare-dev-environment";
+import { resolveWindowsDevElectron } from "./windows-dev-electron";
 
 export type DevelopmentService = "app";
 
@@ -77,6 +78,10 @@ async function main(): Promise<void> {
   if (!dryRun) prepareDevelopmentEnvironment();
   const reservedPorts = new Set<number>();
   const environment: NodeJS.ProcessEnv = { ...process.env };
+  if (!dryRun) {
+    const devElectron = resolveWindowsDevElectron({ platform: process.platform, projectRoot, warn: console.warn });
+    if (devElectron && environment.ELECTRON_EXEC_PATH === undefined) environment.ELECTRON_EXEC_PATH = devElectron;
+  }
 
   const defaultPort = DEFAULT_RENDERER_PORTS.app;
   const rendererPort = await findAvailablePort(

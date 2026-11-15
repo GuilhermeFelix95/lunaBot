@@ -133,6 +133,7 @@
     "electron-builder": "26.15.7",
     "electron-vite": "5.0.0",
     "jsdom": "30.0.1",
+    "resedit": "1.7.2",
     "storybook": "^10.5.10",
     "storybook-solidjs-vite": "^10.7.1",
     "tailwindcss": "4.3.3",
