@@ -2371,10 +2371,19 @@ textarea {
   outline-offset: -2px;
 }
 
+/* The rail is 64px wide: the actions stack in a column so the expand button, the first one, always stays on screen. */
 .sidebar-compact .sidebar-topbar {
-  justify-content: center;
+  height: auto;
+  min-height: var(--left-header-height);
+  flex-direction: column;
+  justify-content: flex-start;
   gap: 4px;
-  padding-inline: 2px;
+  padding: 6px 2px;
+}
+
+.sidebar-compact .sidebar-topbar-actions {
+  flex-direction: column;
+  gap: 4px;
 }
 
 .sidebar-compact .sidebar-icon-button {

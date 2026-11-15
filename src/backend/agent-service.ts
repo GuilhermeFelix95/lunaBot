@@ -86,6 +86,7 @@ import {
   BACKGROUND_TASK_INTERRUPTED_ITEM_TYPE,
   DEFAULT_APPROVAL_POLICY_MODE,
   DEFAULT_BUSY_MESSAGE_MODE,
+  DEFAULT_CLAUDE_COMPACT_WINDOW,
   isImageGenerationAspectRatio,
   isMessageReaction,
   isReasoningEffort,
@@ -128,6 +129,7 @@ import {
 import { LUNABOT_ROOM_DYNAMIC_TOOLS, LUNABOT_ROOM_NAMESPACE } from "./lunabot-room-tools";
 import { LUNABOT_DYNAMIC_TOOLS } from "./lunabot-tools";
 import type { DeliveryContext, GeneratedAttachmentSource, MailboxStore } from "./mailbox-store";
+import { withTimeout } from "./promise-timeout";
 import {
   type AccountLoginCompletedResult,
   type AccountRateLimitResult,
@@ -285,6 +287,7 @@ type PendingMemoryMutation =
 
 const CONTEXT_COMPACTION_THRESHOLD = 0.8;
 const CONTEXT_COMPACTION_TIMEOUT_MS = 120_000;
+const PROVIDER_START_TIMEOUT_MS = 90_000;
 const CODEX_LOGIN_TIMEOUT_MS = 10 * 60_000;
 const CLAUDE_LOGIN_TIMEOUT_MS = 10 * 60_000;
 const GROK_LOGIN_TIMEOUT_MS = 10 * 60_000;
@@ -387,7 +390,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
   readonly #browser: AgentBrowserHost;
   readonly #conversationReads: ConversationReadStore;
   readonly #memories: AgentMemoryStore;
-  #claudeCompactWindow: number | null = null;
+  #claudeCompactWindow: number | null = DEFAULT_CLAUDE_COMPACT_WINDOW;
   #busyMessageMode: BusyMessageMode = DEFAULT_BUSY_MESSAGE_MODE;
   readonly #approvalPolicies = new Map<string, ApprovalPolicyMode>();
   #approvalPolicyFile: string | null = null;
@@ -1254,7 +1257,11 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       });
       this.#providerStarts.set(provider, start);
     }
-    await start;
+    await withTimeout(
+      start,
+      PROVIDER_START_TIMEOUT_MS,
+      nativeMessage("errors.provider.startTimedOut", { label: providerLabel(provider) }),
+    );
     if (this.#clients.has(provider)) return;
     const status = this.#status.providers?.find((candidate) => candidate.id === provider);
     throw new Error(status?.message ?? nativeMessage("errors.provider.notReady", { label: providerLabel(provider) }));
@@ -3992,7 +3999,12 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     budget.contextWindow = contextWindow;
     this.#contextBudgets.set(threadId, budget);
 
-    const pressured = usedTokens / contextWindow >= CONTEXT_COMPACTION_THRESHOLD;
+    // A provider that knows its own trigger (Claude's compact window) reports it; otherwise use a share of the window.
+    const compactAtTokens = finiteNumberOrNull(usage?.compactAtTokens);
+    const pressured =
+      compactAtTokens === null
+        ? usedTokens / contextWindow >= CONTEXT_COMPACTION_THRESHOLD
+        : usedTokens >= compactAtTokens;
     if (!pressured) {
       budget.pending = false;
       budget.lastCompactedTokens = null;
@@ -4054,8 +4066,9 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
 
   #finishContextCompaction(botId: string, threadId: string, status: string): void {
     const budget = this.#contextBudgets.get(threadId);
+    // Whatever the outcome, wait for the conversation to grow before compacting again, so a context that stays large cannot loop.
+    if (budget) budget.lastCompactedTokens = budget.usedTokens;
     if (budget && status !== "completed") {
-      budget.lastCompactedTokens = budget.usedTokens;
       this.#emitError("context_compaction_failed", `Codex context compaction ended with status ${status}.`, botId);
     }
     this.#releaseContextCompaction(botId, threadId);
@@ -4102,7 +4115,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     await this.#mailbox.enqueue({
       sender: { kind: "bot", botId },
       recipientBotIds: [recipientBotId],
-      text,
+      text: text.length > INPUT_LIMITS.messageText ? text.slice(0, INPUT_LIMITS.messageText) : text,
       replyToMessageId: messageId,
       idempotencyKey: `auto-result:${turnId}:${messageId}`,
     });

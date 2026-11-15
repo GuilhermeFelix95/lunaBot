@@ -17,7 +17,7 @@ describe("agent preference store", () => {
     const root = await temporaryRoot();
     await expect(readAgentPreferences(join(root, "agent.json"))).resolves.toEqual({
       memoryLimit: 64,
-      claudeCompactWindow: null,
+      claudeCompactWindow: 200_000,
       busyMessageMode: "queue",
       windowCloseBehavior: "ask",
     });
@@ -29,7 +29,7 @@ describe("agent preference store", () => {
     await writeFile(path, '{"version":1,"memoryLimit":100,"claudeCompactWindow":2000000}\n');
     await expect(readAgentPreferences(path)).resolves.toEqual({
       memoryLimit: 64,
-      claudeCompactWindow: null,
+      claudeCompactWindow: 200_000,
       busyMessageMode: "queue",
       windowCloseBehavior: "ask",
     });
@@ -41,7 +41,7 @@ describe("agent preference store", () => {
     await writeFile(path, '{"version":1,"memoryLimit":256,"claudeCompactWindow":"big"}\n');
     await expect(readAgentPreferences(path)).resolves.toEqual({
       memoryLimit: 256,
-      claudeCompactWindow: null,
+      claudeCompactWindow: 200_000,
       busyMessageMode: "queue",
       windowCloseBehavior: "ask",
     });
@@ -55,13 +55,13 @@ describe("agent preference store", () => {
     await writeFile(unknownVersion, '{"version":2,"memoryLimit":512}\n');
     await expect(readAgentPreferences(broken)).resolves.toEqual({
       memoryLimit: 64,
-      claudeCompactWindow: null,
+      claudeCompactWindow: 200_000,
       busyMessageMode: "queue",
       windowCloseBehavior: "ask",
     });
     await expect(readAgentPreferences(unknownVersion)).resolves.toEqual({
       memoryLimit: 64,
-      claudeCompactWindow: null,
+      claudeCompactWindow: 200_000,
       busyMessageMode: "queue",
       windowCloseBehavior: "ask",
     });
@@ -93,7 +93,7 @@ describe("agent preference store", () => {
     await updateAgentPreferences(path, { claudeCompactWindow: null });
     await expect(readAgentPreferences(path)).resolves.toEqual({
       memoryLimit: 64,
-      claudeCompactWindow: null,
+      claudeCompactWindow: 200_000,
       busyMessageMode: "queue",
       windowCloseBehavior: "ask",
     });

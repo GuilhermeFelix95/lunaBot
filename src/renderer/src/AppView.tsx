@@ -48,6 +48,7 @@ export function AppView() {
     botList,
     activeBot,
     sidebarAgentStates,
+    workingBotIds,
     sidebarLayout,
     collapsedSidebarSectionIds,
     mutateSidebarLayout,
@@ -347,6 +348,7 @@ export function AppView() {
             roomId={roomId()}
             nameOfBot={(botId) => botList().find((bot) => bot.id === botId)?.name}
             creatingRequestId={roomRequestCreation()?.requestId ?? null}
+            workingBotIds={workingBotIds()}
             onCreateBotForRequest={openNewBotFromRoomRequest}
             renderConversation={renderConversation}
           />

@@ -6,6 +6,7 @@ import { hasRoomActivity } from "./room-model";
 
 export const ROOM_SECTIONS_COLLAPSED_STORAGE_KEY = "lunabot:room-sections-collapsed:v1";
 export const ROOM_BACKSTAGE_SEEN_STORAGE_KEY = "lunabot:room-backstage-seen:v1";
+export const ROOM_CONVERSATION_SEEN_STORAGE_KEY = "lunabot:room-conversation-seen:v1";
 
 export type RoomTab = "conversation" | "backstage";
 
@@ -13,6 +14,7 @@ type CollapsedStorage = Pick<Storage, "getItem" | "setItem">;
 
 const collapsedSchema = z.array(z.string().trim().min(1).nullable().catch(null)).catch([]);
 const seenSchema = z.record(z.string(), z.string()).catch({});
+const conversationSeenSchema = z.record(z.string(), z.record(z.string(), z.string())).catch({});
 
 export function readRoomSectionsCollapsed(storage: CollapsedStorage = window.localStorage): string[] {
   try {
@@ -53,6 +55,31 @@ export function writeRoomBackstageSeen(
   }
 }
 
+// Last time each member's conversation was read, per room, as ISO times. Drives the unread flag of a conversation.
+export function readRoomConversationSeen(
+  storage: CollapsedStorage = window.localStorage,
+): Record<string, Record<string, string>> {
+  try {
+    const parsed = conversationSeenSchema.safeParse(
+      JSON.parse(storage.getItem(ROOM_CONVERSATION_SEEN_STORAGE_KEY) ?? "{}"),
+    );
+    return parsed.success ? parsed.data : {};
+  } catch {
+    return {};
+  }
+}
+
+export function writeRoomConversationSeen(
+  seen: Record<string, Record<string, string>>,
+  storage: CollapsedStorage = window.localStorage,
+): void {
+  try {
+    storage.setItem(ROOM_CONVERSATION_SEEN_STORAGE_KEY, JSON.stringify(seen));
+  } catch {
+    // A private display preference must not block room navigation.
+  }
+}
+
 export interface RoomsStore {
   rooms: () => Room[];
   loaded: () => boolean;
@@ -76,6 +103,9 @@ export interface RoomsStore {
   /** True when a request waits or backstage has messages newer than the last visit. */
   hasActivity: (roomId: string) => boolean;
   markBackstageSeen: (roomId: string) => void;
+  /** Last-read time of each member's conversation in the room, keyed by member bot id. */
+  conversationSeen: (roomId: string) => Record<string, string>;
+  markConversationSeen: (roomId: string, botId: string) => void;
   archive: (roomId: string) => Promise<Room | null>;
   reopen: (roomId: string) => Promise<Room | null>;
   deleteForever: (roomId: string) => Promise<boolean>;
@@ -97,6 +127,7 @@ export function createRoomsStore(
   const [backstageByRoom, setBackstageByRoom] = createSignal<Record<string, RoomBackstageMessage[]>>({});
   const [profilesByRoom, setProfilesByRoom] = createSignal<Record<string, BotSummary[]>>({});
   const [seenByRoom, setSeenByRoom] = createSignal<Record<string, string>>(readRoomBackstageSeen(storage));
+  const [conversationSeenByRoom, setConversationSeenByRoom] = createSignal(readRoomConversationSeen(storage));
   const [tab, setTab] = createSignal<RoomTab>("conversation");
   const [memberFilter, setMemberFilter] = createSignal<string | null>(null);
 
@@ -156,6 +187,14 @@ export function createRoomsStore(
     });
   }
 
+  function markConversationSeen(roomId: string, botId: string) {
+    setConversationSeenByRoom((current) => {
+      const next = { ...current, [roomId]: { ...current[roomId], [botId]: new Date().toISOString() } };
+      writeRoomConversationSeen(next, storage);
+      return next;
+    });
+  }
+
   // Opening the backstage tab counts as seeing its messages.
   function showTab(next: RoomTab, roomId: string | null = selectedRoomId()) {
     setTab(next);
@@ -199,6 +238,8 @@ export function createRoomsStore(
       return hasRoomActivity(room, backstageByRoom()[roomId] ?? [], seenByRoom()[roomId] ?? null);
     },
     markBackstageSeen,
+    conversationSeen: (roomId) => conversationSeenByRoom()[roomId] ?? {},
+    markConversationSeen,
     async archive(roomId) {
       const room = await run("rooms.error.archiveFailed", () => api.archive(roomId));
       if (room) replaceRoom(room);

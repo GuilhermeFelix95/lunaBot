@@ -3,10 +3,13 @@ import { flush } from "solid-js";
 import { describe, expect, it } from "vitest";
 import {
   createRoomsStore,
+  ROOM_CONVERSATION_SEEN_STORAGE_KEY,
   ROOM_SECTIONS_COLLAPSED_STORAGE_KEY,
   readRoomBackstageSeen,
+  readRoomConversationSeen,
   readRoomSectionsCollapsed,
   writeRoomBackstageSeen,
+  writeRoomConversationSeen,
 } from "./rooms-store";
 
 const room: Room = {
@@ -222,5 +225,40 @@ describe("rooms store", () => {
 
     expect(readRoomBackstageSeen(broken)).toEqual({});
     expect(() => writeRoomBackstageSeen({ "room-1": "2026-01-01T00:00:00.000Z" }, broken)).not.toThrow();
+  });
+
+  it("keeps each member's last-read time across reloads", () => {
+    const storage = memoryStorage();
+    const store = createRoomsStore(fakeApi().api, storage);
+    store.markConversationSeen("room-1", "writer");
+    flush();
+
+    expect(store.conversationSeen("room-1").writer).toBeDefined();
+    expect(store.conversationSeen("room-2")).toEqual({});
+    expect(readRoomConversationSeen(storage)["room-1"]?.writer).toBeDefined();
+  });
+
+  it("ignores a stored conversation value that is not nested by room and member", () => {
+    const storage = memoryStorage();
+    storage.setItem(ROOM_CONVERSATION_SEEN_STORAGE_KEY, '{"room-1":"2026-01-01T00:00:00.000Z"}');
+    expect(readRoomConversationSeen(storage)).toEqual({});
+  });
+
+  it("keeps working when the conversation marks cannot be read or written", () => {
+    const broken = {
+      getItem: () => {
+        throw new Error("blocked");
+      },
+      setItem: () => {
+        throw new Error("blocked");
+      },
+    };
+
+    expect(readRoomConversationSeen(broken)).toEqual({});
+    expect(() => writeRoomConversationSeen({ "room-1": { writer: "2026-01-01T00:00:00.000Z" } }, broken)).not.toThrow();
+    const store = createRoomsStore(fakeApi().api, broken);
+    expect(() => store.markConversationSeen("room-1", "writer")).not.toThrow();
+    flush();
+    expect(store.conversationSeen("room-1").writer).toBeDefined();
   });
 });

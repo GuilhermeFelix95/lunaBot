@@ -178,6 +178,9 @@ export const EN = {
   "errors.provider.runtimeStart":
     "Luna Bot could not start its included {label} runtime. Update or reinstall Luna Bot.",
   "errors.provider.notReady": "{label} CLI is not ready or signed in.",
+  "errors.provider.startTimedOut": "{label} took too long to start. Try again in a moment.",
+  "errors.claude.setModelTimedOut": "Claude took too long to switch models.",
+  "errors.claude.questionTimedOut": "The user did not answer the question in time.",
   "errors.provider.noAccount": "{provider} didn't send back a signed-in account.",
   "errors.provider.codexOpenPage": "Luna Bot could not open the ChatGPT connection page.",
   "errors.provider.starting": "Launching the local agent CLI…",
@@ -433,6 +436,9 @@ export const PT_BR: Record<NativeMessageKey, string> = {
   "errors.provider.runtimeStart":
     "O Luna Bot não conseguiu iniciar o runtime {label} incluído. Atualize ou reinstale o Luna Bot.",
   "errors.provider.notReady": "A CLI do {label} não está pronta ou não está conectada.",
+  "errors.provider.startTimedOut": "O {label} demorou demais para iniciar. Tente de novo em instantes.",
+  "errors.claude.setModelTimedOut": "O Claude demorou demais para trocar de modelo.",
+  "errors.claude.questionTimedOut": "O usuário não respondeu à pergunta a tempo.",
   "errors.provider.noAccount": "{provider} não devolveu uma conta com login feito.",
   "errors.provider.codexOpenPage": "O Luna Bot não conseguiu abrir a página de conexão do ChatGPT.",
   "errors.provider.starting": "Iniciando a CLI do agente local…",
