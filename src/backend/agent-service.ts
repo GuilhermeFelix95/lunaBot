@@ -3246,9 +3246,23 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     )
       return;
     this.#drainingBots.add(botId);
+    let waitingForTurn = false;
     try {
       const snapshot = this.#snapshots.get(botId);
-      if (snapshot?.activeTurnId) return;
+      if (snapshot?.activeTurnId) {
+        if (!this.#mailbox.isTurnFinished(botId, snapshot.activeTurnId)) {
+          // The running turn schedules the next drain when it completes.
+          waitingForTurn = true;
+          return;
+        }
+        // The turn is over but the bot still points at it, which would block the queue for good.
+        this.#emitError(
+          "stale_active_turn_cleared",
+          `The conversation still pointed at the finished turn ${snapshot.activeTurnId}; its queue resumes.`,
+          botId,
+        );
+        snapshot.activeTurnId = null;
+      }
       const context = this.#mailbox.nextQueued(botId);
       if (!context) return;
       const bot = this.#store.list().find((candidate) => candidate.id === botId);
@@ -3260,7 +3274,8 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       await this.#startDelivery(context);
     } finally {
       this.#drainingBots.delete(botId);
-      if (this.#mailbox.nextQueued(botId)) this.#scheduleDrain(botId);
+      // Rescheduling while a turn is running would loop through microtasks without ever yielding.
+      if (!waitingForTurn && this.#mailbox.nextQueued(botId)) this.#scheduleDrain(botId);
     }
   }
 
@@ -3773,6 +3788,8 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
           contextBudget.compactionTurnId = turnId;
           return;
         }
+        // A start that arrives after its turn already finished would leave the bot looking busy for good.
+        if (this.#mailbox.isTurnFinished(botId, turnId)) return;
         const publicThreadId = this.#publicThreadId(botId, threadId);
         const snapshot = this.#ensureSnapshot(botId, publicThreadId);
         snapshot.activeTurnId = turnId;
