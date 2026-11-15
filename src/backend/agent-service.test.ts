@@ -2621,6 +2621,54 @@ describe.sequential("AgentService", () => {
     );
   });
 
+  it("keeps draining the queue when a late turn start arrives for a turn that already finished", async () => {
+    const clients = new Map<AgentProvider, FakeAgentClient>();
+    const { store, mailbox } = stores();
+    service = new AgentService(store, mailbox, fakeBrowser(), 30_000, "codex", (provider) => {
+      const client = new FakeAgentClient(provider, "CODEX_DONE", false);
+      clients.set(provider, client);
+      return client;
+    });
+    const events: AgentEvent[] = [];
+    service.on("event", (event) => events.push(event));
+    await service.initialize();
+    await service.sendMessage({ botId: "chief", text: "First task" });
+    await waitFor(() => events.some((event) => event.type === "turn-started"));
+    const first = events.find((event) => event.type === "turn-started");
+    if (first?.type !== "turn-started") throw new Error("Turn did not start.");
+    const client = clients.get("codex");
+    const externalThreadId = store.activeProviderSession("chief")?.externalSessionId;
+    if (!client || !externalThreadId) throw new Error("Active provider session is missing.");
+
+    client.emit(
+      "notification",
+      notification("turn/completed", { threadId: externalThreadId, turn: { id: first.turnId, status: "completed" } }),
+    );
+    await waitFor(() => events.some((event) => event.type === "turn-completed"));
+    // The same start arriving again after the turn is over must not make the bot look busy for good.
+    client.emit(
+      "notification",
+      notification("turn/started", { threadId: externalThreadId, turn: { id: first.turnId, status: "inProgress" } }),
+    );
+
+    // A drain that reschedules itself through microtasks without yielding would starve the process. The spy turns
+    // such a loop into timers so the test can count it instead of hanging.
+    const original = globalThis.queueMicrotask.bind(globalThis);
+    let scheduled = 0;
+    const spy = vi.spyOn(globalThis, "queueMicrotask").mockImplementation((callback) => {
+      scheduled += 1;
+      if (scheduled > 500) setTimeout(callback, 0);
+      else original(callback);
+    });
+    try {
+      await service.sendMessage({ botId: "chief", text: "Second task" });
+      await waitFor(() => client.requests.filter((request) => request.method === "turn/start").length === 2);
+      expect(scheduled).toBeLessThan(100);
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
   it("steers a message sent during a running turn when steer mode is selected", async () => {
     const clients = new Map<AgentProvider, FakeAgentClient>();
     const { store, mailbox } = stores();

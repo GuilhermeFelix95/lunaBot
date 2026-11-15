@@ -712,6 +712,19 @@ export class MailboxStore {
     return delivery ? this.#context(delivery) : null;
   }
 
+  /** True when deliveries ran this turn and every one of them has reached a terminal state. */
+  isTurnFinished(botId: string, turnId: string): boolean {
+    const own = this.#state.deliveries.filter(
+      (delivery) => delivery.recipientBotId === botId && delivery.turnId === turnId,
+    );
+    return (
+      own.length > 0 &&
+      own.every(
+        (delivery) => delivery.status !== "queued" && delivery.status !== "starting" && delivery.status !== "running",
+      )
+    );
+  }
+
   findDeliveriesByTurn(botId: string, turnId: string): DeliveryContext[] {
     return this.#state.deliveries
       .filter(
