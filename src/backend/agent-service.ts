@@ -4038,8 +4038,9 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
 
   #finishContextCompaction(botId: string, threadId: string, status: string): void {
     const budget = this.#contextBudgets.get(threadId);
+    // Whatever the outcome, wait for the conversation to grow before compacting again, so a context that stays large cannot loop.
+    if (budget) budget.lastCompactedTokens = budget.usedTokens;
     if (budget && status !== "completed") {
-      budget.lastCompactedTokens = budget.usedTokens;
       this.#emitError("context_compaction_failed", `Codex context compaction ended with status ${status}.`, botId);
     }
     this.#releaseContextCompaction(botId, threadId);
