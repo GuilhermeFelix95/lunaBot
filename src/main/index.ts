@@ -45,6 +45,7 @@ import {
   parseAgentExport,
   serializeAgentExport,
 } from "../backend/agent-transfer";
+import { BackgroundTaskJournal } from "../backend/background-task-journal";
 import { BotStore } from "../backend/bot-store";
 import { BrowserHost } from "../backend/browser-host";
 import { isCloseBrowserTabShortcut, isSelectAllShortcut, isToggleDevToolsShortcut } from "../backend/browser-shortcuts";
@@ -230,6 +231,7 @@ if (!app.isPackaged) {
 }
 const BROWSER_STATE_FILE = "lunabot-browser-state-v1.json";
 const SIDEBAR_LAYOUT_FILE = "lunabot-sidebar-layout-v1.json";
+const BACKGROUND_TASK_FILE = "lunabot-background-tasks-v1.json";
 const EXTERNAL_DESTINATIONS: Record<ExternalDestination, string> = {
   "claude-install": "https://code.claude.com/docs",
   "claude-sign-in": "https://code.claude.com/docs/en/authentication",
@@ -1270,6 +1272,8 @@ if (!hasSingleInstanceLock) {
         providerRuntimeManager.executablePath("codex"),
         providerRuntimeManager.executablePath("claude"),
         providerRuntimeManager.executablePath("grok"),
+        undefined,
+        new BackgroundTaskJournal(join(app.getPath("userData"), BACKGROUND_TASK_FILE)),
       );
       const service = agentService;
       service.setAgentMemoryLimit(agentPreferences.memoryLimit);

@@ -95,6 +95,7 @@ export function AppView() {
     pendingPrompts,
     pendingApprovals,
     activeTurns,
+    backgroundTasks,
     botSetupOpen,
     botSetupDraft,
     setBotSetupDraft,
@@ -200,6 +201,7 @@ export function AppView() {
       approval={activeBot() ? pendingApprovals()[activeBot()?.id ?? ""] : undefined}
       browserTakeover={activeBrowserTakeover()}
       activeTurnId={activeBot() ? activeTurns()[activeBot()?.id ?? ""] : null}
+      backgroundTasks={activeBot() ? (backgroundTasks()[activeBot()?.id ?? ""] ?? []) : []}
       globalOverlayOpen={globalSearchOpen() || appSettingsOpen()}
       settingsRequest={settingsRequest()}
       messageFocusRequest={messageFocusRequest()}

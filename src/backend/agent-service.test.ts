@@ -13,6 +13,7 @@ import {
   AGENT_RUNTIME_TEXT_LIMIT,
   type AgentEvent,
   approvalAutoItemType,
+  BACKGROUND_TASK_INTERRUPTED_ITEM_TYPE,
   type BrowserControlState,
   type BrowserTab,
   isAgentEvent,
@@ -29,6 +30,7 @@ import { AgentMemoryStore } from "./agent-memory-store";
 import { AgentRoutineStore } from "./agent-routine-store";
 import { AgentService } from "./agent-service";
 import { parseAgentExport, serializeAgentExport } from "./agent-transfer";
+import { BackgroundTaskJournal } from "./background-task-journal";
 import { BotStore } from "./bot-store";
 import { ClaudeAgentClient } from "./claude-client";
 import { MailboxStore } from "./mailbox-store";
@@ -704,6 +706,103 @@ describe.sequential("AgentService", () => {
       expect(params.runtimeWorkspaceRoots).toEqual([params.cwd, store.sharedRoot]);
     }
     expect((await store.getOrCreate("chief")).threadId).not.toBe((await store.getOrCreate("sales-outbound")).threadId);
+  });
+
+  it("reports background tasks and marks them interrupted after an app restart", async () => {
+    const journal = new BackgroundTaskJournal(join(root, "background-tasks.json"));
+    const { store, mailbox } = stores();
+    const clients: FakeAgentClient[] = [];
+    const events: AgentEvent[] = [];
+    service = new AgentService(
+      store,
+      mailbox,
+      fakeBrowser(),
+      30_000,
+      "codex",
+      (provider) => {
+        const client = new FakeAgentClient(provider);
+        clients.push(client);
+        return client;
+      },
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      journal,
+    );
+    service.on("event", (event) => events.push(event));
+    await service.initialize();
+    await service.sendMessage({ botId: "chief", text: "Start a background job." });
+    await waitFor(() => Boolean(store.activeProviderSession("chief")?.externalSessionId));
+    const threadId = store.activeProviderSession("chief")?.externalSessionId;
+    const client = clients[0];
+    if (!client || !threadId) throw new Error("The background task thread did not start.");
+
+    client.emit(
+      "notification",
+      notification("thread/backgroundTasks", {
+        threadId,
+        tasks: [{ id: "task-1", description: "Scan the repository" }],
+      }),
+    );
+    await waitFor(() => events.some((event) => event.type === "background-tasks-changed" && event.tasks.length === 1));
+    expect(service.getRuntimeSnapshot().backgroundTasks).toEqual([
+      { botId: "chief", tasks: [{ id: "task-1", description: "Scan the repository" }] },
+    ]);
+    await waitFor(async () => (await journal.read()).includes("chief"));
+    await service.stop();
+
+    service = new AgentService(
+      store,
+      mailbox,
+      fakeBrowser(),
+      30_000,
+      "codex",
+      (provider) => new FakeAgentClient(provider),
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      journal,
+    );
+    await service.initialize();
+    const conversation = await service.readConversation("chief");
+    expect(conversation.messages).toContainEqual(
+      expect.objectContaining({ itemType: BACKGROUND_TASK_INTERRUPTED_ITEM_TYPE }),
+    );
+    expect(await journal.read()).toEqual([]);
+  });
+
+  it("starts room Claude managers with subagent tools disabled", async () => {
+    process.env.LUNABOT_CLAUDE_PATH = await createFakeClaude(root);
+    const { store, mailbox } = stores();
+    const clients = new Map<AgentProvider, FakeAgentClient>();
+    service = new AgentService(store, mailbox, fakeBrowser(), 30_000, "claude", (provider) => {
+      const client = new FakeAgentClient(provider);
+      clients.set(provider, client);
+      return client;
+    });
+    await service.initialize();
+    await waitFor(() =>
+      service?.getStatus().providers?.some((item) => item.id === "claude" && item.state === "available"),
+    );
+    const rooms = new RoomService(store, service);
+    const room = await rooms.createRoom({
+      name: "Launch",
+      manager: {
+        name: "Room Lead",
+        description: "Coordinates the room.",
+        avatarSeed: "setup:room-lead",
+        avatarHue: 215,
+      },
+    });
+    const managerId = room.members.find((member) => member.role === "manager")?.botId ?? "";
+    expect(store.list().find((bot) => bot.id === managerId)).toMatchObject({ provider: "claude" });
+    await service.sendMessage({ botId: managerId, text: "Start the launch." });
+    await waitFor(() => Boolean(clients.get("claude")?.requests.some((request) => request.method === "thread/start")));
+
+    const start = clients.get("claude")?.requests.find((request) => request.method === "thread/start");
+    expect(paramsRecord(start?.params)).toMatchObject({ allowSubagents: false });
   });
 
   it("connects ChatGPT through the Codex App Server and promotes the authenticated client", async () => {

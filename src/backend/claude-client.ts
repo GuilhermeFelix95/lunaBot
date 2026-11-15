@@ -53,13 +53,21 @@ interface ThreadConfig {
   additionalDirectories: string[];
   persistSession: boolean;
   roomManagerTools: boolean;
+  allowSubagents: boolean;
 }
+
+// Agent is the current name of the subagent tool; Task is the name older Claude Code builds use.
+const SUBAGENT_TOOL_NAMES = ["Agent", "Task"];
+const TASK_DESCRIPTION_LIMIT = 120;
+const TERMINAL_TASK_STATUSES = new Set(["completed", "failed", "killed"]);
 
 interface ActiveTurn {
   id: string;
   itemId: string;
   text: string;
   assistantMessages: Map<string, string>;
+  /** Opened by background work that answered with no user turn in flight. It has no user bubble and closes on the next result. */
+  autonomous: boolean;
 }
 
 interface ThreadRuntime {
@@ -70,6 +78,9 @@ interface ThreadRuntime {
   query: ClaudeQuery;
   activeTurn: ActiveTurn | null;
   consume: Promise<void>;
+  /** Running SDK tasks by task id. The SDK's background_tasks_changed level signal replaces this set. */
+  backgroundTasks: Map<string, string>;
+  reportedBackgroundTasks: string;
 }
 
 interface PendingServerRequest {
@@ -88,6 +99,11 @@ interface ClaudeStreamMessage {
   result?: string;
   errors?: string[];
   terminal_reason?: string;
+  task_id?: string;
+  description?: string;
+  is_backgrounded?: boolean;
+  patch?: unknown;
+  tasks?: unknown;
 }
 
 interface ClaudeQuery extends AsyncIterable<ClaudeStreamMessage> {
@@ -175,6 +191,9 @@ export class ClaudeAgentClient extends EventEmitter<ClientEvents> {
           current.input.close();
           current.query.close();
           await current.consume;
+          // The restarted process cannot reach the background tasks of the one it replaces.
+          current.backgroundTasks.clear();
+          this.#reportBackgroundTasks(current);
         }
         if (!this.#threads.has(threadId)) {
           await this.#startThread(threadId, config, true);
@@ -337,6 +356,7 @@ export class ClaudeAgentClient extends EventEmitter<ClientEvents> {
         ...(config.model ? { model: this.#sdkModel(config.model) } : {}),
         ...(appliedEffort ? { effort: appliedEffort } : {}),
         ...(resume ? { resume: threadId } : { sessionId: threadId }),
+        ...(config.allowSubagents ? {} : { disallowedTools: SUBAGENT_TOOL_NAMES }),
         systemPrompt: {
           type: "preset",
           preset: "claude_code",
@@ -363,6 +383,8 @@ export class ClaudeAgentClient extends EventEmitter<ClientEvents> {
       query: claudeQuery,
       activeTurn: null,
       consume: Promise.resolve(),
+      backgroundTasks: new Map(),
+      reportedBackgroundTasks: "[]",
     };
     runtime.consume = this.#consume(runtime);
     this.#threads.set(threadId, runtime);
@@ -399,6 +421,7 @@ export class ClaudeAgentClient extends EventEmitter<ClientEvents> {
       itemId: `${turnId}:assistant`,
       text: "",
       assistantMessages: new Map<string, string>(),
+      autonomous: false,
     };
     runtime.activeTurn = activeTurn;
     this.emit("notification", {
@@ -473,14 +496,19 @@ export class ClaudeAgentClient extends EventEmitter<ClientEvents> {
 
     if (message.type === "assistant") {
       if (message.parent_tool_use_id !== null) return;
-      const turn = runtime.activeTurn;
       const text = messageText(message.message);
-      if (!turn || !text || !message.uuid) return;
+      if (!text || !message.uuid) return;
+      const turn = runtime.activeTurn ?? this.#openAutonomousTurn(runtime);
       turn.assistantMessages.set(message.uuid, text);
       const completeText = [...turn.assistantMessages.values()].join("");
       if (completeText.startsWith(turn.text)) {
         this.#appendDelta(runtime, completeText.slice(turn.text.length));
       }
+      return;
+    }
+
+    if (message.type === "system") {
+      this.#handleBackgroundTaskMessage(runtime, message);
       return;
     }
 
@@ -502,8 +530,8 @@ export class ClaudeAgentClient extends EventEmitter<ClientEvents> {
   }
 
   #appendDelta(runtime: ThreadRuntime, delta: string): void {
-    const turn = runtime.activeTurn;
-    if (!turn || !delta) return;
+    if (!delta) return;
+    const turn = runtime.activeTurn ?? this.#openAutonomousTurn(runtime);
     turn.text += delta;
     this.emit("notification", {
       method: "item/agentMessage/delta",
@@ -535,9 +563,65 @@ export class ClaudeAgentClient extends EventEmitter<ClientEvents> {
     }
     this.emit("notification", {
       method: "turn/completed",
-      params: { threadId: runtime.id, turn: { id: turn.id, status } },
+      params: {
+        threadId: runtime.id,
+        ...(turn.autonomous ? { origin: "system" } : {}),
+        turn: { id: turn.id, status },
+      },
     });
     runtime.activeTurn = null;
+  }
+
+  // Background work (a finished subagent, a scheduled wake-up) can make Claude answer with no user turn in flight.
+  // The turn is opened only when text arrives, so it is never empty, and the next result closes it.
+  #openAutonomousTurn(runtime: ThreadRuntime): ActiveTurn {
+    const turnId = randomUUID();
+    const turn: ActiveTurn = {
+      id: turnId,
+      itemId: `${turnId}:assistant`,
+      text: "",
+      assistantMessages: new Map<string, string>(),
+      autonomous: true,
+    };
+    runtime.activeTurn = turn;
+    this.emit("notification", {
+      method: "turn/started",
+      params: { threadId: runtime.id, origin: "system", turn: { id: turnId, status: "inProgress" } },
+    });
+    return turn;
+  }
+
+  #handleBackgroundTaskMessage(runtime: ThreadRuntime, message: ClaudeStreamMessage): void {
+    if (message.subtype === "background_tasks_changed") {
+      // Level signal: the list it carries is the complete set of running tasks.
+      runtime.backgroundTasks.clear();
+      for (const task of Array.isArray(message.tasks) ? message.tasks : []) {
+        if (isRecord(task) && isString(task.task_id)) {
+          runtime.backgroundTasks.set(task.task_id, taskDescription(task.description));
+        }
+      }
+    } else if (message.subtype === "task_started" && isString(message.task_id)) {
+      runtime.backgroundTasks.set(message.task_id, taskDescription(message.description));
+    } else if (message.subtype === "task_notification" && isString(message.task_id)) {
+      runtime.backgroundTasks.delete(message.task_id);
+    } else if (message.subtype === "task_updated" && isString(message.task_id)) {
+      const status = isRecord(message.patch) ? message.patch.status : undefined;
+      if (isString(status) && TERMINAL_TASK_STATUSES.has(status)) runtime.backgroundTasks.delete(message.task_id);
+    } else {
+      return;
+    }
+    this.#reportBackgroundTasks(runtime);
+  }
+
+  #reportBackgroundTasks(runtime: ThreadRuntime): void {
+    const tasks = [...runtime.backgroundTasks].map(([id, description]) => ({ id, description }));
+    const serialized = JSON.stringify(tasks);
+    if (serialized === runtime.reportedBackgroundTasks) return;
+    runtime.reportedBackgroundTasks = serialized;
+    this.emit("notification", {
+      method: "thread/backgroundTasks",
+      params: { threadId: runtime.id, tasks },
+    });
   }
 
   async #readThread(threadId: string): Promise<ThreadResponse> {
@@ -893,7 +977,12 @@ function readThreadConfig(params: unknown): ThreadConfig {
       params.dynamicTools.some(
         (entry) => isRecord(entry) && entry.type === "namespace" && entry.name === LUNABOT_ROOM_NAMESPACE,
       ),
+    allowSubagents: !isRecord(params) || params.allowSubagents !== false,
   };
+}
+
+function taskDescription(value: unknown): string {
+  return isString(value) ? value.trim().slice(0, TASK_DESCRIPTION_LIMIT) : "";
 }
 
 function requiredString(value: unknown, key: string): string {

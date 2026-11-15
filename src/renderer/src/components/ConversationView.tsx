@@ -5,6 +5,7 @@ import {
   removeAttachmentReferences,
 } from "@lunabot/contracts/attachment-references";
 import type {
+  AgentBackgroundTask,
   AgentEvent,
   AgentModelId,
   AgentModelOption,
@@ -83,6 +84,7 @@ import {
   voiceTranscriptionError,
 } from "./conversation/voice-status";
 import { ProviderModelPicker } from "./ProviderModelPicker";
+import { TypingDots } from "./TypingDots";
 import {
   Bubble,
   BubbleContent,
@@ -213,6 +215,8 @@ export interface ConversationProps {
   loadingOlder?: boolean;
   olderError?: string | null;
   activeTurnId: string | null | undefined;
+  /** Tasks the agent's SDK still runs in the background. They show in a strip above the composer. */
+  backgroundTasks?: AgentBackgroundTask[];
   /** Why the composer cannot send right now, such as an archived room. It replaces the placeholder. */
   composerLockedReason?: string;
   globalOverlayOpen: boolean;
@@ -3251,6 +3255,18 @@ export function ConversationComposer() {
   return (
     <Show when={!props.prompt && !props.approval && !props.browserTakeover}>
       <div class="composer-wrap">
+        <Show when={(props.backgroundTasks ?? []).length > 0}>
+          {/* No stop button: turn/interrupt does not stop SDK background tasks, so stopping them needs its own IPC. */}
+          <div class="background-task-strip" role="status">
+            <TypingDots class="background-task-strip-dots" />
+            <span class="background-task-strip-label">
+              {t("conversation.backgroundTasks.summary", { count: props.backgroundTasks?.length ?? 0 })}
+            </span>
+            <Show when={props.backgroundTasks?.[0]?.description}>
+              {(description) => <span class="background-task-strip-detail">{description()}</span>}
+            </Show>
+          </div>
+        </Show>
         <div
           class="agent-queue-slot"
           data-open={queuePanelVisible() ? "true" : "false"}

@@ -13,6 +13,7 @@ import type {
   AgentApproval,
   AgentApprovalKind,
   AgentApprovalPermissions,
+  AgentBackgroundTask,
   AgentEvent,
   AgentMemoryLimit,
   AgentModelOption,
@@ -74,6 +75,7 @@ import type {
   UpdateRoutineInput,
 } from "@lunabot/contracts/ipc";
 import {
+  AGENT_BACKGROUND_TASKS_LIMIT,
   AGENT_RUNTIME_ATTENTION_LIMIT,
   AGENT_RUNTIME_PERMISSION_PATHS_LIMIT,
   AGENT_RUNTIME_QUESTION_DESCRIPTION_LIMIT,
@@ -81,6 +83,7 @@ import {
   AGENT_RUNTIME_SNAPSHOT_BYTES_LIMIT,
   AGENT_RUNTIME_TEXT_LIMIT,
   approvalAutoItemType,
+  BACKGROUND_TASK_INTERRUPTED_ITEM_TYPE,
   DEFAULT_APPROVAL_POLICY_MODE,
   DEFAULT_BUSY_MESSAGE_MODE,
   isImageGenerationAspectRatio,
@@ -93,7 +96,7 @@ import {
   routineConversationEventItemType,
   routineRunConversationEventItemType,
 } from "@lunabot/contracts/ipc";
-import { type DynamicRecord, isBoolean, isNumber, isString } from "@lunabot/contracts/runtime-values";
+import { type DynamicRecord, isBoolean, isDynamicRecord, isNumber, isString } from "@lunabot/contracts/runtime-values";
 import { nativeMessage } from "../main/native-messages";
 import type { AgentClient, AgentProvider } from "./agent-client";
 import { AgentMemoryStore } from "./agent-memory-store";
@@ -102,6 +105,7 @@ import { type AgentExportFile, buildAgentExport } from "./agent-transfer";
 import { AppServerError, CodexAppServerClient } from "./app-server-client";
 import { type ApprovalAutomationDecision, decideApprovalAutomation } from "./approval-policy";
 import { readApprovalPolicies, realPathOrNearestAncestor, writeApprovalPolicies } from "./approval-policy-store";
+import type { BackgroundTaskJournal } from "./background-task-journal";
 import type { BotStore } from "./bot-store";
 import { BROWSER_DYNAMIC_TOOLS, LUNABOT_BROWSER_NAMESPACE } from "./browser-host";
 import {
@@ -390,6 +394,8 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
   readonly #bundledClaudeExecutable: string | null | undefined;
   readonly #bundledGrokExecutable: string | null | undefined;
   readonly #prepareBotWorkspace: (bot: BotSummary) => Promise<void>;
+  readonly #backgroundTaskJournal: BackgroundTaskJournal | null;
+  readonly #backgroundTasks = new Map<string, AgentBackgroundTask[]>();
   readonly #snapshots = new Map<string, ConversationSnapshot>();
   readonly #threadToBot = new Map<string, string>();
   readonly #loadedThreads = new Set<string>();
@@ -451,8 +457,10 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     bundledClaudeExecutable: string | null | undefined = null,
     bundledGrokExecutable: string | null | undefined = null,
     prepareBotWorkspace: (bot: BotSummary) => Promise<void> = async () => undefined,
+    backgroundTaskJournal: BackgroundTaskJournal | null = null,
   ) {
     super();
+    this.#backgroundTaskJournal = backgroundTaskJournal;
     this.#store = store;
     this.#mailbox = mailbox;
     this.#browser = browser;
@@ -578,6 +586,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       pendingApprovals,
       pendingBrowserTakeovers,
       failedTurns: [...this.#failedTurns].map(([botId, turnId]) => ({ botId, turnId })),
+      backgroundTasks: [...this.#backgroundTasks].map(([botId, tasks]) => ({ botId, tasks })),
     });
   }
 
@@ -1184,6 +1193,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     await this.#store.initialize();
     await this.#mailbox.initialize();
     this.#recoverPersistedTurns();
+    await this.#recoverBackgroundTasks();
     this.#routines.skipMissed(new Date());
     this.#initialized = true;
     await this.#connect(
@@ -2517,6 +2527,8 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         ephemeral: false,
         serviceName: "lunabot",
         dynamicTools: this.#dynamicToolsFor(currentBot.id),
+        // Room bots get work through messages to members, so they never start subagents.
+        ...(client.provider === "claude" && scope.kind === "room" ? { allowSubagents: false } : {}),
       },
       decodeThreadResponse,
     );
@@ -2543,6 +2555,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       sandbox: "danger-full-access",
       developerInstructions: developerInstructions(bot, sharedRoot, this.#memories.list(bot.id), scope),
       dynamicTools: this.#dynamicToolsFor(bot.id),
+      ...(client.provider === "claude" && scope.kind === "room" ? { allowSubagents: false } : {}),
     };
 
     try {
@@ -3530,6 +3543,52 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     }
   }
 
+  #backgroundTasksFromNotification(params: unknown): AgentBackgroundTask[] {
+    const tasks = isDynamicRecord(params) && Array.isArray(params.tasks) ? params.tasks : [];
+    return tasks
+      .flatMap((task): AgentBackgroundTask[] =>
+        isDynamicRecord(task) && isString(task.id)
+          ? [{ id: task.id, description: isString(task.description) ? task.description : "" }]
+          : [],
+      )
+      .slice(0, AGENT_BACKGROUND_TASKS_LIMIT);
+  }
+
+  #setBackgroundTasks(botId: string, tasks: AgentBackgroundTask[]): void {
+    if (tasks.length > 0) this.#backgroundTasks.set(botId, tasks);
+    else this.#backgroundTasks.delete(botId);
+    this.#emit({ type: "background-tasks-changed", botId, tasks });
+    void this.#backgroundTaskJournal
+      ?.write([...this.#backgroundTasks.keys()])
+      .catch((error) => this.#emitError("background_task_journal_failed", error, botId));
+  }
+
+  // Tasks die with the app, so a bot still listed in the journal had work interrupted by the last shutdown or crash.
+  async #recoverBackgroundTasks(): Promise<void> {
+    const journal = this.#backgroundTaskJournal;
+    if (!journal) return;
+    for (const botId of await journal.read()) {
+      const bot = this.#knownBots().find((candidate) => candidate.id === botId);
+      if (!bot?.threadId) continue;
+      const snapshot = this.#store.database.readConversation(bot.id, bot.threadId);
+      snapshot.messages.push({
+        id: randomUUID(),
+        author: "system",
+        source: "system",
+        text: "",
+        createdAt: new Date().toISOString(),
+        status: "completed",
+        itemType: BACKGROUND_TASK_INTERRUPTED_ITEM_TYPE,
+      });
+      sortConversationMessages(snapshot.messages);
+      const persisted = this.#store.database.persistConversation(snapshot, "background-task.interrupted-by-restart", {
+        botId,
+      });
+      this.#snapshots.set(bot.id, persisted);
+    }
+    await journal.write([]);
+  }
+
   async #backfillProviderHistory(): Promise<void> {
     for (const bot of this.#store.list()) {
       if (!bot.threadId) continue;
@@ -3683,8 +3742,12 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         const snapshot = this.#ensureSnapshot(botId, publicThreadId);
         snapshot.activeTurnId = turnId;
         this.#failedTurns.delete(botId);
-        const origin = this.#mailbox.startingDeliveryForBot(botId)?.delivery.sender.kind ?? "unknown";
-        const association = this.#associateStartedTurn(botId, turnId, snapshot);
+        // A turn Claude opened for background work has no queued delivery, so it must not claim the one that is starting.
+        const autonomous = getString(params, "origin") === "system";
+        const origin = autonomous
+          ? "system"
+          : (this.#mailbox.startingDeliveryForBot(botId)?.delivery.sender.kind ?? "unknown");
+        const association = autonomous ? Promise.resolve() : this.#associateStartedTurn(botId, turnId, snapshot);
         this.#turnAssociations.set(turnId, association);
         void association.finally(() => {
           if (this.#turnAssociations.get(turnId) === association) {
@@ -3756,7 +3819,8 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
           this.#finishContextCompaction(botId, threadId, status);
           return;
         }
-        void this.#completeTurn(botId, threadId, turnId, status).catch((error) => {
+        const autonomous = getString(params, "origin") === "system";
+        void this.#completeTurn(botId, threadId, turnId, status, autonomous).catch((error) => {
           this.#emitError("turn_completion_failed", error, botId);
         });
         return;
@@ -3764,6 +3828,11 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       case "thread/tokenUsage/updated": {
         if (!threadId || !botId) return;
         this.#updateContextBudget(threadId, params);
+        return;
+      }
+      case "thread/backgroundTasks": {
+        if (!botId) return;
+        this.#setBackgroundTasks(botId, this.#backgroundTasksFromNotification(params));
         return;
       }
       case "thread/archived": {
@@ -3795,7 +3864,13 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     }
   }
 
-  async #completeTurn(botId: string, threadId: string, turnId: string, status: string): Promise<void> {
+  async #completeTurn(
+    botId: string,
+    threadId: string,
+    turnId: string,
+    status: string,
+    autonomous = false,
+  ): Promise<void> {
     this.#flushTurnDeltas(turnId);
     await this.#waitForImageGenerationOperations(threadId, turnId);
     await this.#turnAssociations.get(turnId)?.catch(() => undefined);
@@ -3852,7 +3927,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       threadId: this.#publicThreadId(botId, threadId),
       turnId,
       status,
-      origin: deliveries[0]?.delivery.sender.kind ?? "unknown",
+      origin: deliveries[0]?.delivery.sender.kind ?? (autonomous ? "system" : "unknown"),
     });
     if (shouldCompact) await this.#requestContextCompaction(botId, threadId);
     else this.#scheduleDrain(botId);

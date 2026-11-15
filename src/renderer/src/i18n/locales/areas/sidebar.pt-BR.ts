@@ -27,6 +27,7 @@ export const sidebarPtBR: Partial<Record<keyof typeof sidebarEn, string>> = {
   "sidebar.pinned.limit.one": "Máximo de {count} conversa fixada",
   "sidebar.pinned.limit.other": "Máximo de {count} conversas fixadas",
   "sidebar.agent.thinking": "Pensando",
+  "sidebar.agent.background": "Trabalhando em segundo plano",
   "sidebar.agent.responded": "Respondeu",
   "sidebar.agent.newReplies.one": "{count} resposta nova",
   "sidebar.agent.newReplies.other": "{count} respostas novas",

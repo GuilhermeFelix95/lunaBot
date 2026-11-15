@@ -119,6 +119,10 @@ export const conversationPtBR: Partial<Record<keyof typeof conversationEn, strin
   "conversation.marker.runningRoutine": "Rotina em execução",
   "conversation.marker.unavailable": "Indisponível",
   "conversation.marker.approvalAuto": "Aprovado automaticamente",
+  "conversation.marker.backgroundTaskInterrupted":
+    "Uma tarefa em segundo plano foi interrompida porque o app foi reiniciado",
+  "conversation.backgroundTasks.summary.one": "Trabalhando em segundo plano · {count} tarefa",
+  "conversation.backgroundTasks.summary.other": "Trabalhando em segundo plano · {count} tarefas",
   "conversation.marker.unavailableAgent": "Agente indisponível",
   "conversation.marker.unknownTime": "Horário desconhecido",
   "conversation.marker.updatedRoutine": "Rotina atualizada",

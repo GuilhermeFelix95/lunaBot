@@ -24,6 +24,7 @@ export const sidebarEn = {
   "sidebar.pinned.limit.one": "Maximum {count} pinned chat",
   "sidebar.pinned.limit.other": "Maximum {count} pinned chats",
   "sidebar.agent.thinking": "Thinking",
+  "sidebar.agent.background": "Working in the background",
   "sidebar.agent.responded": "Responded",
   "sidebar.agent.newReplies.one": "{count} new reply",
   "sidebar.agent.newReplies.other": "{count} new replies",

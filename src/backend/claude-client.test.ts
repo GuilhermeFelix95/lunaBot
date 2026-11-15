@@ -46,6 +46,17 @@ type TestStreamMessage =
       errors: string[];
       session_id: string;
       uuid: string;
+    }
+  | {
+      type: "system";
+      subtype: "task_started" | "task_updated" | "task_notification" | "background_tasks_changed";
+      session_id: string;
+      uuid: string;
+      task_id?: string;
+      description?: string;
+      status?: "completed" | "failed" | "stopped";
+      patch?: { status: string };
+      tasks?: Array<{ task_id: string; task_type: string; description: string }>;
     };
 
 let root: string | null = null;
@@ -609,6 +620,99 @@ if (process.argv[2] === "auth") {
     expect(completedText(notifications)).toBe("Hello");
     await client.stop();
   });
+
+  it("opens a system turn for late background text and completes it on the next result", async () => {
+    const { client, notifications, output, threadId } = await createHarness();
+    const turnId = "66666666-6666-4666-8666-666666666666";
+    await startTurn(client, threadId, turnId);
+
+    output.push(assistantMessage(threadId, "main-message", "Done"));
+    output.push(resultMessage(threadId, turnId, ""));
+    await waitFor(() => notifications.filter((event) => event.method === "turn/completed").length === 1);
+
+    output.push(assistantMessage(threadId, "late-message", "Background build finished"));
+    output.push(resultMessage(threadId, "late-result", ""));
+    await waitFor(() => notifications.filter((event) => event.method === "turn/completed").length === 2);
+
+    expect(notifications.filter((event) => event.method === "turn/started")).toHaveLength(2);
+    expect(notifications.filter((event) => event.method === "turn/started").at(-1)).toMatchObject({
+      params: { origin: "system", turn: { status: "inProgress" } },
+    });
+    expect(notificationDeltas(notifications)).toEqual(["Done", "Background build finished"]);
+    expect(notifications.filter((event) => event.method === "turn/completed").at(-1)).toMatchObject({
+      params: { origin: "system", turn: { status: "completed" } },
+    });
+    expect(notifications.filter((event) => event.method === "item/completed").at(-1)).toMatchObject({
+      params: { item: { text: "Background build finished" } },
+    });
+    await client.stop();
+  });
+
+  it("does not open a turn for background content without text", async () => {
+    const { client, notifications, output, threadId } = await createHarness();
+    output.push(streamDelta(threadId, "empty-stream", ""));
+    output.push(assistantMessage(threadId, "empty-message", ""));
+    output.push(resultMessage(threadId, "empty-result", ""));
+    output.push(
+      systemMessage(threadId, {
+        subtype: "background_tasks_changed",
+        tasks: [{ task_id: "task-1", task_type: "local_agent", description: "Wait" }],
+      }),
+    );
+    // The task list is handled after the empty messages, so its notification proves they were processed.
+    await waitFor(() => backgroundTaskLists(notifications).length === 1);
+
+    expect(notifications.map((event) => event.method)).not.toContain("turn/started");
+    expect(notifications.map((event) => event.method)).not.toContain("turn/completed");
+    await client.stop();
+  });
+
+  it("reports SDK background tasks as they start, finish, and fail", async () => {
+    const { client, notifications, output, threadId } = await createHarness();
+
+    output.push(systemMessage(threadId, { subtype: "task_started", task_id: "task-1", description: "Index the repo" }));
+    await waitFor(() => backgroundTaskLists(notifications).length === 1);
+    output.push(systemMessage(threadId, { subtype: "task_started", task_id: "task-2", description: "Run tests" }));
+    await waitFor(() => backgroundTaskLists(notifications).length === 2);
+    expect(backgroundTaskLists(notifications).at(-1)).toEqual([
+      { id: "task-1", description: "Index the repo" },
+      { id: "task-2", description: "Run tests" },
+    ]);
+
+    output.push(systemMessage(threadId, { subtype: "task_notification", task_id: "task-1", status: "completed" }));
+    await waitFor(() => backgroundTaskLists(notifications).length === 3);
+    expect(backgroundTaskLists(notifications).at(-1)).toEqual([{ id: "task-2", description: "Run tests" }]);
+
+    output.push(systemMessage(threadId, { subtype: "task_updated", task_id: "task-2", patch: { status: "failed" } }));
+    await waitFor(() => backgroundTaskLists(notifications).length === 4);
+    expect(backgroundTaskLists(notifications).at(-1)).toEqual([]);
+    await client.stop();
+  });
+
+  it("replaces the background task list with the SDK's level signal", async () => {
+    const { client, notifications, output, threadId } = await createHarness();
+
+    output.push(systemMessage(threadId, { subtype: "task_started", task_id: "task-1", description: "Old task" }));
+    await waitFor(() => backgroundTaskLists(notifications).length === 1);
+    output.push(
+      systemMessage(threadId, {
+        subtype: "background_tasks_changed",
+        tasks: [{ task_id: "task-2", task_type: "local_agent", description: "New task" }],
+      }),
+    );
+    await waitFor(() => backgroundTaskLists(notifications).length === 2);
+
+    expect(backgroundTaskLists(notifications).at(-1)).toEqual([{ id: "task-2", description: "New task" }]);
+    await client.stop();
+  });
+
+  it("turns off Claude's subagent tools only for threads that opt out", async () => {
+    const restricted = await startThreadOptions({ allowSubagents: false });
+    expect(restricted).toMatchObject({ disallowedTools: ["Agent", "Task"] });
+
+    const unrestricted = await startThreadOptions({});
+    expect(unrestricted).not.toHaveProperty("disallowedTools");
+  });
 });
 
 async function createHarness(): Promise<{
@@ -678,6 +782,19 @@ function assistantMessage(
     uuid: messageId,
     message: { content: [{ type: "text", text }] },
   };
+}
+
+function systemMessage(
+  threadId: string,
+  message: Omit<Extract<TestStreamMessage, { type: "system" }>, "type" | "session_id" | "uuid">,
+): TestStreamMessage {
+  return { type: "system", session_id: threadId, uuid: "system-message", ...message };
+}
+
+function backgroundTaskLists(notifications: Array<{ method: string; params: unknown }>): unknown[] {
+  return notifications
+    .filter((event) => event.method === "thread/backgroundTasks")
+    .map((event) => (isDynamicRecord(event.params) ? event.params.tasks : undefined));
 }
 
 function resultMessage(threadId: string, turnId: string, result: string): TestStreamMessage {
@@ -786,6 +903,21 @@ async function startClaudeThread(dynamicTools: unknown[]): Promise<DynamicRecord
   await client.stop();
   if (captured.mcpServers === null) throw new Error("Claude query options were not captured.");
   return captured.mcpServers;
+}
+
+async function startThreadOptions(params: DynamicRecord): Promise<DynamicRecord> {
+  root = await mkdtemp(join(tmpdir(), "lunabot-claude-subagents-"));
+  const executable = await writeNodeExecutable(root, "claude", "#!/usr/bin/env node\n", "cjs");
+  const captured: { options: DynamicRecord | null } = { options: null };
+  const client = new ClaudeAgentClient({ executable, version: "2.1.231" }, (queryParams) => {
+    captured.options = isDynamicRecord(queryParams.options) ? queryParams.options : null;
+    return new TestQuery(new TestQueue<TestStreamMessage>());
+  });
+  client.start();
+  await client.request("thread/start", { cwd: root, ...params }, decodeThreadResponse);
+  await client.stop();
+  if (captured.options === null) throw new Error("Claude query options were not captured.");
+  return captured.options;
 }
 
 function registeredToolNames(mcpServers: DynamicRecord, serverName: string): string[] {

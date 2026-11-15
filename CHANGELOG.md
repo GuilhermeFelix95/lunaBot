@@ -4,6 +4,31 @@ All notable changes to Luna Bot are recorded here.
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-11-15
+
+### Added
+
+- Rooms. Create a room next to Create bot, name it, and pick which of your bots join. Each room has its own manager,
+  and every bot in it is an isolated copy with its own memory, files and workspace. The manager can look up only the
+  name and role of your other bots, and asks for your approval before hiring one. When a bot does not exist yet, the
+  manager asks you to create it. A room can use its own browser profile or the shared one.
+- Room conversations: talk only to the manager in the Conversation tab, and follow what the manager and the bots say to
+  each other, read only, in the Backstage tab.
+- Room lifecycle: dismiss a bot and keep its history, archive a room, reopen it, or delete it for good from the archive.
+- A strip above the composer and an animated marker in the sidebar show when an agent is working in the background.
+- The result of background work now comes back to the conversation. Before, it was dropped when the original turn ended,
+  and a note appears if the app restarted while a task was still running.
+
+### Changed
+
+- On Windows and Linux a downloaded update installs when the app quits, so closing the app or shutting the computer
+  down no longer leaves you on the old version.
+
+### Fixed
+
+- Choosing a model in a room now takes effect, and a new room starts with a provider that is available.
+- Long replies in a room no longer push the message box off the screen; the conversation follows the latest message.
+
 ## [0.1.2] - 2026-11-14
 
 ### Fixed

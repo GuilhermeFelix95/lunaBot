@@ -7,6 +7,7 @@ import type {
 } from "@lunabot/contracts/ipc";
 import {
   isApprovalAutoMarker,
+  isBackgroundTaskInterruptedMarker,
   isRoutineRunConversationEventMarker,
   ROOM_REQUEST_NOTICE_ITEM_TYPE_PREFIX,
   ROUTINE_EVENT_ITEM_TYPE_PREFIX,
@@ -136,7 +137,8 @@ export function readStateForMessages(
         !message.itemType?.startsWith(ROUTINE_EVENT_ITEM_TYPE_PREFIX) &&
         !message.itemType?.startsWith(ROOM_REQUEST_NOTICE_ITEM_TYPE_PREFIX) &&
         !isRoutineRunConversationEventMarker(message.itemType) &&
-        !isApprovalAutoMarker(message.itemType),
+        !isApprovalAutoMarker(message.itemType) &&
+        !isBackgroundTaskInterruptedMarker(message.itemType),
     );
   return {
     ...state,
@@ -257,6 +259,13 @@ function chatActionMarker(
   }
   if (isApprovalAutoMarker(message.itemType)) {
     return { kind: "approval-auto", label: t("conversation.marker.approvalAuto"), timestamp: message.createdAt };
+  }
+  if (isBackgroundTaskInterruptedMarker(message.itemType)) {
+    return {
+      kind: "background-task-interrupted",
+      label: t("conversation.marker.backgroundTaskInterrupted"),
+      timestamp: message.createdAt,
+    };
   }
   const roomRequestNotice = roomRequestNoticeConversationEvent(message);
   if (roomRequestNotice) {

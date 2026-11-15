@@ -5661,6 +5661,62 @@ button.chat-action-target:active,
   padding: 0 12px 7px;
 }
 
+.background-task-strip {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  margin: 0 0 6px;
+  padding: 6px 12px;
+  border-radius: var(--lunabot-radius-pill);
+  background: var(--lunabot-bg-surface);
+  color: var(--lunabot-text-secondary);
+  font-size: 12px;
+}
+
+.background-task-strip-dots {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 2px;
+}
+
+.background-task-strip-dots i {
+  width: 3px;
+  height: 3px;
+  border-radius: var(--lunabot-radius-pill);
+  background: currentColor;
+  --typing-dot-travel: -1px;
+  animation: typing-dot-pulse 900ms ease-in-out infinite;
+}
+
+.background-task-strip-dots i:nth-child(2) {
+  animation-delay: var(--lunabot-duration-fast);
+}
+
+.background-task-strip-dots i:nth-child(3) {
+  animation-delay: var(--lunabot-duration-overlay);
+}
+
+.background-task-strip-label {
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
+
+.background-task-strip-detail {
+  min-width: 0;
+  overflow: hidden;
+  opacity: 0.8;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .background-task-strip-dots i {
+    animation: none;
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   .bot-row-thinking-dots i,
   .image-generation-dots,

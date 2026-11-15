@@ -34,6 +34,7 @@ import {
   IconButton,
   Input,
   LayoutGrid,
+  LoaderCircle,
   Pencil,
   Pin,
   PinOff,
@@ -79,7 +80,11 @@ interface SidebarProps {
   };
 }
 
-export type SidebarAgentState = { kind: "working" } | { kind: "responded" } | { kind: "unread"; count: number };
+export type SidebarAgentState =
+  | { kind: "working" }
+  | { kind: "background" }
+  | { kind: "responded" }
+  | { kind: "unread"; count: number };
 
 type ResolvedPinnedItem = { ref: SidebarPinnedItem; bot: BotProfile };
 
@@ -176,6 +181,7 @@ function sidebarDropTargetsEqual(left: SidebarDropTarget | null, right: SidebarD
 
 function sidebarAgentStateLabel(state: SidebarAgentState): string {
   if (state.kind === "working") return t("sidebar.agent.thinking");
+  if (state.kind === "background") return t("sidebar.agent.background");
   if (state.kind === "responded") return t("sidebar.agent.responded");
   return t("sidebar.agent.newReplies", { count: state.count });
 }
@@ -186,6 +192,9 @@ function SidebarAgentIndicator(props: { state: SidebarAgentState }) {
     <span class={`bot-row-agent-status bot-row-agent-status-${props.state.kind}`} aria-hidden="true">
       <Show when={props.state.kind === "working"}>
         <TypingDots class="bot-row-thinking-dots" />
+      </Show>
+      <Show when={props.state.kind === "background"}>
+        <LoaderCircle class="bot-row-background-icon" />
       </Show>
       <Show when={props.state.kind === "responded"}>
         <svg viewBox="0 0 12 12">

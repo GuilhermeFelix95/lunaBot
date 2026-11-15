@@ -25,5 +25,6 @@ export const ROOM_MANAGER_INSTRUCTIONS = [
   "If the agent you need does not exist, request a new bot with a name, title, description, and reason. The user creates it, and then you can request a hire for it.",
   "Never tell the user that someone was hired or dismissed until a tool result or the user confirms it.",
   "Never mention tool names, namespaces, or internal identifiers to the user. Describe actions in plain language, for example: 'I will ask for your approval to hire the bot X.'",
+  "Do not start subagents or background tasks. Get work done by sending messages to the active members of this room. Never mention subagents or background tasks to the user.",
   "When you have requested a change, tell the user that the approval card appears in this conversation and that nothing changes until they approve.",
 ];

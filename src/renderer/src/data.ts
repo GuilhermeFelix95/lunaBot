@@ -70,6 +70,11 @@ export type ChatActionMarkerModel =
       timestamp: string;
     }
   | {
+      kind: "background-task-interrupted";
+      label: string;
+      timestamp: string;
+    }
+  | {
       kind: "room-request";
       label: string;
       timestamp: string;

@@ -672,6 +672,13 @@ export function isApprovalAutoMarker(itemType: string | undefined): boolean {
   return itemType?.startsWith(APPROVAL_AUTO_ITEM_TYPE_PREFIX) === true;
 }
 
+/** Restart note for a background task that was running when the app closed. */
+export const BACKGROUND_TASK_INTERRUPTED_ITEM_TYPE = "background-task-interrupted";
+
+export function isBackgroundTaskInterruptedMarker(itemType: string | undefined): boolean {
+  return itemType === BACKGROUND_TASK_INTERRUPTED_ITEM_TYPE;
+}
+
 export type RoutineRunConversationEventStatus = Exclude<RoutineRunStatus, "queued">;
 
 export interface RoutineRunConversationEvent {
@@ -1149,6 +1156,7 @@ export interface AgentRuntimeSnapshot {
   pendingApprovals: AgentRuntimeApproval[];
   pendingBrowserTakeovers: BrowserTakeoverRequest[];
   failedTurns: Array<{ botId: string; turnId: string }>;
+  backgroundTasks?: Array<{ botId: string; tasks: AgentBackgroundTask[] }>;
 }
 
 export const AGENT_RUNTIME_TEXT_LIMIT = 240;
@@ -1158,6 +1166,15 @@ export const AGENT_RUNTIME_WORKING_ITEMS_LIMIT = 3;
 export const AGENT_RUNTIME_ATTENTION_LIMIT = 4;
 export const AGENT_RUNTIME_PERMISSION_PATHS_LIMIT = 3;
 export const AGENT_RUNTIME_SNAPSHOT_BYTES_LIMIT = 256 * 1024;
+
+/** A running SDK task (for example a subagent) that keeps the agent busy after its turn has ended. */
+export interface AgentBackgroundTask {
+  id: string;
+  description: string;
+}
+
+export const AGENT_BACKGROUND_TASKS_LIMIT = 20;
+export const AGENT_BACKGROUND_TASK_DESCRIPTION_LIMIT = 120;
 
 export interface AgentRuntimeBotSummary {
   id: string;
@@ -1247,6 +1264,7 @@ export type AgentEvent =
   | { type: "browser-takeover-resolved"; requestId: string | number; botId: string }
   | { type: "approval"; approval: AgentApproval }
   | { type: "runtime-snapshot"; snapshot: AgentRuntimeSnapshot }
+  | { type: "background-tasks-changed"; botId: string; tasks: AgentBackgroundTask[] }
   | { type: "browser-changed"; tabs: BrowserTab[]; activeTabId: string | null }
   | { type: "browser-control-changed"; state: BrowserControlState }
   | { type: "error"; botId?: string; code: string; message: string };
@@ -1335,6 +1353,8 @@ export function isAgentEvent(value: unknown): value is AgentEvent {
       return isAgentApproval(value.approval);
     case "runtime-snapshot":
       return isAgentRuntimeSnapshot(value.snapshot);
+    case "background-tasks-changed":
+      return isIdentifier(value.botId) && isAgentBackgroundTasks(value.tasks);
     case "browser-changed":
       return Array.isArray(value.tabs) && (value.activeTabId === null || isString(value.activeTabId));
     case "browser-control-changed":
@@ -1385,7 +1405,26 @@ function isAgentRuntimeSnapshot(value: unknown): value is AgentRuntimeSnapshot {
       AGENT_RUNTIME_ATTENTION_LIMIT &&
     Array.isArray(value.failedTurns) &&
     value.failedTurns.length <= INPUT_LIMITS.agents &&
-    value.failedTurns.every((turn) => isDynamicRecord(turn) && isIdentifier(turn.botId) && isIdentifier(turn.turnId))
+    value.failedTurns.every((turn) => isDynamicRecord(turn) && isIdentifier(turn.botId) && isIdentifier(turn.turnId)) &&
+    (value.backgroundTasks === undefined ||
+      (Array.isArray(value.backgroundTasks) &&
+        value.backgroundTasks.length <= INPUT_LIMITS.agents &&
+        value.backgroundTasks.every(
+          (entry) => isDynamicRecord(entry) && isIdentifier(entry.botId) && isAgentBackgroundTasks(entry.tasks),
+        )))
+  );
+}
+
+function isAgentBackgroundTasks(value: unknown): value is AgentBackgroundTask[] {
+  return (
+    Array.isArray(value) &&
+    value.length <= AGENT_BACKGROUND_TASKS_LIMIT &&
+    value.every(
+      (task) =>
+        isDynamicRecord(task) &&
+        isIdentifier(task.id) &&
+        isBoundedString(task.description, AGENT_BACKGROUND_TASK_DESCRIPTION_LIMIT),
+    )
   );
 }
 

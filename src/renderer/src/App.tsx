@@ -1,6 +1,7 @@
 import type {
   AccountUsage,
   AgentApproval,
+  AgentBackgroundTask,
   AgentEvent,
   AgentModelOption,
   AgentProviderId,
@@ -263,6 +264,7 @@ export function createAppController(props: AppProps = {}) {
   const [conversationOlderLoading, setConversationOlderLoading] = createSignal<Record<string, boolean>>({});
   const [conversationOlderErrors, setConversationOlderErrors] = createSignal<Record<string, string | null>>({});
   const [activeTurns, setActiveTurns] = createSignal<Record<string, string | null>>({});
+  const [backgroundTasks, setBackgroundTasks] = createSignal<Record<string, AgentBackgroundTask[]>>({});
   const [failedTurns, setFailedTurns] = createSignal<Record<string, string | undefined>>({});
   const [unreadReplies, setUnreadReplies] = createSignal<Record<string, number>>({});
   const [conversationReads, setConversationReads] = createSignal<Record<string, ConversationReadState>>({});
@@ -805,6 +807,9 @@ export function createAppController(props: AppProps = {}) {
         if (props.landingPreview) return;
         setBrowserControlState(event.state);
         return;
+      case "background-tasks-changed":
+        setBackgroundTasks((current) => ({ ...current, [event.botId]: event.tasks }));
+        return;
       case "turn-started":
         completedTurnByBot.delete(event.botId);
         clearRecentReply(event.botId);
@@ -902,6 +907,7 @@ export function createAppController(props: AppProps = {}) {
 
   function applyAgentRuntimeSnapshot(snapshot: AgentRuntimeSnapshot): void {
     setActiveTurns(Object.fromEntries(snapshot.activeTurns.map((turn) => [turn.botId, turn.turnId])));
+    setBackgroundTasks(Object.fromEntries((snapshot.backgroundTasks ?? []).map((entry) => [entry.botId, entry.tasks])));
     setFailedTurns(Object.fromEntries(snapshot.failedTurns.map((turn) => [turn.botId, turn.turnId])));
     setQueues((current) =>
       reconcileQueuesWithRuntimeWork(
@@ -1978,6 +1984,7 @@ export function createAppController(props: AppProps = {}) {
   });
   const sidebarAgentStates = createMemo<Record<string, SidebarAgentState>>(() => {
     const turns = activeTurns();
+    const backgroundTasksByBot = backgroundTasks();
     const queueSnapshots = queues();
     const unread = unreadReplies();
     const recent = recentReplies();
@@ -1991,6 +1998,7 @@ export function createAppController(props: AppProps = {}) {
           ),
         );
       if (isWorking) states[bot.id] = { kind: "working" };
+      else if ((backgroundTasksByBot[bot.id]?.length ?? 0) > 0) states[bot.id] = { kind: "background" };
       else if ((unread[bot.id] ?? 0) > 0) {
         states[bot.id] = { kind: "unread", count: unread[bot.id] ?? 1 };
       } else if (recent[bot.id]) states[bot.id] = { kind: "responded" };
@@ -2295,6 +2303,7 @@ export function createAppController(props: AppProps = {}) {
     pendingPrompts,
     pendingApprovals,
     activeTurns,
+    backgroundTasks,
     botSetupOpen,
     botSetupDraft,
     setBotSetupDraft,
