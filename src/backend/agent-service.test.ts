@@ -2548,7 +2548,8 @@ describe.sequential("AgentService", () => {
     await waitFor(() => service?.listQueue("chief").deliveries[0]?.status === "interrupted");
 
     await waitFor(async () => (await protocolMessages()).filter((item) => item.method === "turn/start").length === 2);
-    expect(service.listQueue("chief").deliveries[1]?.status).toBe("running");
+    // The delivery is "starting" until the turn start is confirmed, so wait for it instead of reading it at once.
+    await waitFor(() => service?.listQueue("chief").deliveries[1]?.status === "running");
 
     const conversationSignatures = events
       .filter((event) => event.type === "conversation" && event.snapshot.botId === "chief")
