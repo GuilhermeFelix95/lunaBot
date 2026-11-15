@@ -36,7 +36,7 @@ type TestStreamMessage =
       parent_tool_use_id: string | null;
       session_id: string;
       uuid: string;
-      message: { content: Array<{ type: "text"; text: string }> };
+      message: { content: Array<{ type: "text"; text: string }>; usage?: Record<string, number> };
     }
   | {
       type: "result";
@@ -44,6 +44,7 @@ type TestStreamMessage =
       result: string;
       terminal_reason: "completed";
       errors: string[];
+      modelUsage?: Record<string, { contextWindow: number }>;
       session_id: string;
       uuid: string;
     }
@@ -591,6 +592,46 @@ if (process.argv[2] === "auth") {
     await client.stop();
   });
 
+  it("reports the conversation size from each model call and the compact window", async () => {
+    const { client, notifications, output, threadId } = await createHarness(200_000);
+    await startTurn(client, threadId, "66666666-6666-4666-8666-666666666666");
+
+    output.push({
+      type: "assistant",
+      parent_tool_use_id: null,
+      session_id: threadId,
+      uuid: "usage-message",
+      message: {
+        content: [{ type: "text", text: "Hi" }],
+        usage: { input_tokens: 10, cache_creation_input_tokens: 100, cache_read_input_tokens: 1_000, output_tokens: 5 },
+      },
+    });
+    await waitFor(() => notifications.some((event) => event.method === "thread/tokenUsage/updated"));
+
+    const update = notifications.find((event) => event.method === "thread/tokenUsage/updated");
+    expect(update?.params).toEqual({
+      threadId,
+      tokenUsage: { last: { totalTokens: 1_115 }, modelContextWindow: 200_000, compactAtTokens: 200_000 },
+    });
+    await client.stop();
+  });
+
+  it("compacts through a /compact turn of its own", async () => {
+    const { client, notifications, output, prompt, threadId } = await createHarness();
+
+    await client.request("thread/compact/start", { threadId }, decodeRecordResponse);
+
+    const first = await prompt[Symbol.asyncIterator]().next();
+    expect(first.value).toMatchObject({ message: { content: "/compact" } });
+    expect(notifications.some((event) => event.method === "turn/started")).toBe(true);
+
+    output.push(assistantMessage(threadId, "compact-reply", "Not enough messages to compact."));
+    output.push(resultMessage(threadId, "compact-turn", "Not enough messages to compact."));
+    await waitFor(() => notifications.some((event) => event.method === "turn/completed"));
+    expect(notifications.some((event) => event.method.startsWith("item/"))).toBe(false);
+    await client.stop();
+  });
+
   it("adds only the missing suffix from a complete assistant message", async () => {
     const { client, notifications, output, threadId } = await createHarness();
     const turnId = "22222222-2222-4222-8222-222222222222";
@@ -715,7 +756,7 @@ if (process.argv[2] === "auth") {
   });
 });
 
-async function createHarness(): Promise<{
+async function createHarness(compactWindow: number | null = null): Promise<{
   client: ClaudeAgentClient;
   notifications: Array<{ method: string; params: unknown }>;
   output: TestQueue<TestStreamMessage>;
@@ -726,10 +767,14 @@ async function createHarness(): Promise<{
   const output = new TestQueue<TestStreamMessage>();
   let prompt: AsyncIterable<SDKUserMessage> | null = null;
   const generator = new TestQuery(output);
-  const client = new ClaudeAgentClient({ executable: "/bin/true", version: "2.1.231" }, (params) => {
-    if (!isString(params.prompt)) prompt = params.prompt;
-    return generator;
-  });
+  const client = new ClaudeAgentClient(
+    { executable: "/bin/true", version: "2.1.231" },
+    (params) => {
+      if (!isString(params.prompt)) prompt = params.prompt;
+      return generator;
+    },
+    () => compactWindow,
+  );
   const notifications: Array<{ method: string; params: unknown }> = [];
   client.on("notification", (notification) => notifications.push(notification));
   client.start();
