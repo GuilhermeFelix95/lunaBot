@@ -56,7 +56,7 @@ import { SidebarLayoutStore } from "../backend/sidebar-layout-store";
 import { AgentInitializationGate } from "./agent-initialization";
 import { notificationForAgentEvent } from "./agent-notifications";
 import { readAgentPreferences, updateAgentPreferences } from "./agent-preference-store";
-import { readAppVariant, resolveAppIconPath, windowsAppUserModelId } from "./app-icon";
+import { applicationName, readAppVariant, resolveAppIconPath, windowsAppUserModelId } from "./app-icon";
 import { BrowserPictureInPicture } from "./browser-picture-in-picture";
 import { ComputerUseMacSetupService } from "./computer-use-mac-setup";
 import { ComputerUseMacSetupWindowController } from "./computer-use-mac-setup-window";
@@ -162,7 +162,7 @@ if (commandLineUserDataDirectory) {
     ),
   );
 }
-app.setName("Luna Bot");
+app.setName(applicationName(app.isPackaged));
 app.enableSandbox();
 if (process.platform === "win32") app.setAppUserModelId(windowsAppUserModelId(app.isPackaged));
 const hasSingleInstanceLock = app.requestSingleInstanceLock();
