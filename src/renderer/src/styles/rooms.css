@@ -597,12 +597,6 @@
   line-height: var(--lunabot-leading-sm);
 }
 
-.rooms-view-empty {
-  margin: 0;
-  color: var(--lunabot-ink-2);
-  font-size: var(--lunabot-text-sm);
-}
-
 /* Rooms: manager requests. */
 
 .rooms-request-list {
@@ -640,58 +634,331 @@
   gap: var(--lunabot-space-2);
 }
 
-/* Rooms: read-only backstage. */
+/* Rooms: read-only backstage, a conversation list beside the selected conversation. */
 
-.rooms-backstage {
-  display: flex;
-  flex-direction: column;
-  gap: var(--lunabot-space-3);
-  min-width: 0;
+/* The tab panel is the container, because a container query cannot style its own element. */
+.rooms-view-backstage {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: hidden;
+  container-type: inline-size;
 }
 
-.rooms-backstage-filters {
+.rooms-backstage {
+  flex: 1 1 auto;
+  display: grid;
+  grid-template-columns: minmax(240px, 330px) minmax(0, 1fr);
+  grid-template-rows: auto minmax(0, 1fr);
+  min-width: 0;
+  min-height: 0;
+}
+
+.rooms-backstage-error {
+  grid-column: 1 / -1;
+  padding: var(--lunabot-space-2) var(--lunabot-space-3);
+}
+
+.rooms-backstage-list-pane,
+.rooms-backstage-detail {
   display: flex;
-  flex-wrap: wrap;
-  gap: var(--lunabot-space-1);
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+}
+
+.rooms-backstage-list-pane {
+  border-right: 1px solid var(--lunabot-line);
+}
+
+.rooms-backstage-list-head {
+  display: flex;
+  align-items: center;
+  gap: var(--lunabot-space-1-5);
+  padding: var(--lunabot-space-2) var(--lunabot-space-3);
+  border-bottom: 1px solid var(--lunabot-line);
+  color: var(--lunabot-ink-2);
+  font-size: var(--lunabot-text-xs);
 }
 
 .rooms-backstage-list {
   display: flex;
+  flex: 1 1 auto;
   flex-direction: column;
-  gap: var(--lunabot-space-2);
-  margin: 0;
-  padding: 0;
-  list-style: none;
+  gap: var(--lunabot-space-1);
+  min-height: 0;
+  padding: var(--lunabot-space-2);
+  overflow-y: auto;
 }
 
-.rooms-backstage-message {
+.rooms-backstage-item {
   display: flex;
+  align-items: flex-start;
+  gap: var(--lunabot-space-2);
+  width: 100%;
+  min-width: 0;
+  margin: 0;
+  padding: var(--lunabot-space-2);
+  border: 0;
+  border-radius: var(--lunabot-radius-md);
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.rooms-backstage-item:hover {
+  background: var(--lunabot-bg-control-hover);
+}
+
+.rooms-backstage-item[aria-selected="true"] {
+  background: var(--lunabot-accent-soft);
+}
+
+.rooms-backstage-item:focus-visible {
+  outline: 2px solid var(--lunabot-border-focus);
+  outline-offset: -2px;
+}
+
+.rooms-backstage-avatar {
+  flex-shrink: 0;
+  width: var(--lunabot-icon-md);
+  height: var(--lunabot-icon-md);
+}
+
+.rooms-backstage-item-main {
+  display: flex;
+  flex: 1 1 auto;
   flex-direction: column;
   gap: var(--lunabot-space-0-5);
   min-width: 0;
-  padding: var(--lunabot-space-2) var(--lunabot-space-3);
-  border-radius: var(--lunabot-radius-md);
-  background: var(--lunabot-surface-sunken);
 }
 
-.rooms-backstage-meta {
+.rooms-backstage-item-top {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--lunabot-space-2);
+  min-width: 0;
+}
+
+.rooms-backstage-name {
+  min-width: 0;
+  overflow: hidden;
+  font-weight: var(--lunabot-weight-medium);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.rooms-backstage time {
+  flex-shrink: 0;
+  color: var(--lunabot-ink-3);
+  font-size: var(--lunabot-text-xs);
+  white-space: nowrap;
+}
+
+.rooms-backstage-preview {
+  overflow: hidden;
+  color: var(--lunabot-ink-2);
+  font-size: var(--lunabot-text-sm);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.rooms-backstage-item-meta {
   display: flex;
   flex-wrap: wrap;
-  align-items: baseline;
-  gap: var(--lunabot-space-2);
+  align-items: center;
+  gap: var(--lunabot-space-1) var(--lunabot-space-2);
+  color: var(--lunabot-ink-3);
+  font-size: var(--lunabot-text-xs);
+}
+
+.rooms-backstage-state {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--lunabot-space-1);
+}
+
+.rooms-backstage-item[data-state="working"] .rooms-backstage-state {
+  color: var(--lunabot-accent-text);
+}
+
+.rooms-backstage-item[data-state="waiting"] .rooms-backstage-state {
+  color: var(--lunabot-warning);
+}
+
+.rooms-backstage-unread {
+  flex-shrink: 0;
+  width: var(--lunabot-space-2);
+  height: var(--lunabot-space-2);
+  border-radius: var(--lunabot-radius-pill);
+  background: var(--lunabot-accent);
+}
+
+.rooms-backstage-empty {
+  margin: 0;
+  padding: var(--lunabot-space-2) var(--lunabot-space-1);
   color: var(--lunabot-ink-2);
   font-size: var(--lunabot-text-sm);
 }
 
-.rooms-backstage-text {
+.rooms-backstage-detail {
+  gap: var(--lunabot-space-3);
+  padding: var(--lunabot-space-3) var(--lunabot-space-4);
+}
+
+.rooms-backstage-detail-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--lunabot-space-1) var(--lunabot-space-3);
+  padding-bottom: var(--lunabot-space-2);
+  border-bottom: 1px solid var(--lunabot-line);
+}
+
+.rooms-backstage-detail-avatar {
+  width: 34px;
+  height: 34px;
+}
+
+.rooms-backstage-back {
+  display: none;
+  align-items: center;
+  gap: var(--lunabot-space-1);
+  padding: var(--lunabot-space-1) 0;
+  border: 0;
+  background: none;
+  color: var(--lunabot-accent-text);
+  font: inherit;
+  cursor: pointer;
+}
+
+.rooms-backstage-title {
+  min-width: 0;
   margin: 0;
   overflow-wrap: anywhere;
-  white-space: pre-wrap;
   font-size: var(--lunabot-text-md);
+  font-weight: var(--lunabot-weight-semibold);
+}
+
+.rooms-backstage-detail-meta {
+  color: var(--lunabot-ink-3);
+  font-size: var(--lunabot-text-sm);
+}
+
+.rooms-backstage-thread {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  gap: var(--lunabot-space-3);
+  min-height: 0;
+  padding-right: var(--lunabot-space-1);
+  overflow-y: auto;
+}
+
+.rooms-backstage-day {
+  display: flex;
+  align-items: center;
+  gap: var(--lunabot-space-2);
+  color: var(--lunabot-ink-3);
+  font-size: var(--lunabot-text-xs);
+}
+
+.rooms-backstage-day::before,
+.rooms-backstage-day::after {
+  content: "";
+  flex: 1 1 auto;
+  height: 1px;
+  background: var(--lunabot-line);
+}
+
+.rooms-backstage-bubble {
+  --backstage-bubble-bg: var(--lunabot-surface-sunken);
+  display: flex;
+  flex-direction: column;
+  gap: var(--lunabot-space-1);
+  align-self: flex-start;
+  min-width: 0;
+  max-width: min(100%, 680px);
+  padding: var(--lunabot-space-2) var(--lunabot-space-3);
+  border-radius: var(--lunabot-radius-bubble);
+  background: var(--backstage-bubble-bg);
+}
+
+.rooms-backstage-bubble[data-own] {
+  --backstage-bubble-bg: var(--lunabot-accent-soft);
+  align-self: flex-end;
+}
+
+.rooms-backstage-bubble-meta {
+  display: flex;
+  align-items: baseline;
+  gap: var(--lunabot-space-2);
+  color: var(--lunabot-ink-3);
+  font-size: var(--lunabot-text-xs);
+}
+
+.rooms-backstage-bubble-meta strong {
+  color: var(--lunabot-ink-2);
+  font-weight: var(--lunabot-weight-medium);
+}
+
+.rooms-backstage-body {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  font-size: var(--lunabot-text-lg);
+  line-height: 1.55;
+}
+
+.rooms-backstage-body p,
+.rooms-backstage-body li {
+  font-size: inherit;
+  line-height: inherit;
+}
+
+/* A long message keeps its first lines; the fade shows that more follows. */
+.rooms-backstage-body[data-collapsed] {
+  position: relative;
+  max-height: 14lh;
+  overflow: hidden;
+}
+
+.rooms-backstage-body[data-collapsed]::after {
+  content: "";
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  height: 3lh;
+  background: linear-gradient(to bottom, transparent, var(--backstage-bubble-bg));
+  pointer-events: none;
 }
 
 .rooms-backstage-attachments {
+  display: flex;
+  align-items: center;
+  gap: var(--lunabot-space-1);
   margin: 0;
   color: var(--lunabot-ink-2);
   font-size: var(--lunabot-text-sm);
+}
+
+/* Narrow: one column at a time. The list shows until a conversation opens; then the conversation replaces it. */
+@container (max-width: 720px) {
+  .rooms-backstage {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .rooms-backstage:not([data-detail]) > .rooms-backstage-detail {
+    display: none;
+  }
+
+  .rooms-backstage[data-detail] > .rooms-backstage-list-pane {
+    display: none;
+  }
+
+  .rooms-backstage[data-detail] .rooms-backstage-back {
+    display: inline-flex;
+  }
 }

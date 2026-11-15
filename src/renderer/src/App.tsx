@@ -1982,6 +1982,17 @@ export function createAppController(props: AppProps = {}) {
     const bot = activeBot();
     return bot ? routineIdsByConversation()[bot.id] : undefined;
   });
+  // Every bot with a turn or a delivery in progress, room bots included; the sidebar states below only cover the general list.
+  const workingBotIds = createMemo<ReadonlySet<string>>(() => {
+    const working = new Set<string>();
+    for (const [botId, turn] of Object.entries(activeTurns())) if (turn) working.add(botId);
+    for (const [botId, queue] of Object.entries(queues())) {
+      if (queue?.deliveries.some((delivery) => delivery.status === "starting" || delivery.status === "running")) {
+        working.add(botId);
+      }
+    }
+    return working;
+  });
   const sidebarAgentStates = createMemo<Record<string, SidebarAgentState>>(() => {
     const turns = activeTurns();
     const backgroundTasksByBot = backgroundTasks();
@@ -2251,6 +2262,7 @@ export function createAppController(props: AppProps = {}) {
     botList,
     activeBot,
     sidebarAgentStates,
+    workingBotIds,
     sidebarLayout,
     collapsedSidebarSectionIds: sidebarCollapsedSectionIds,
     mutateSidebarLayout,

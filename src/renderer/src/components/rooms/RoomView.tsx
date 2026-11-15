@@ -2,10 +2,11 @@ import type { Room, RoomRequest } from "@lunabot/contracts/ipc";
 import type { JSX } from "@solidjs/web";
 import { createEffect, createSignal, For, Show } from "solid-js";
 import { t } from "../../i18n";
-import { Archive, Button, DropdownMenu, Ellipsis, Tabs } from "../ui";
+import { Archive, DropdownMenu, Ellipsis, Tabs } from "../ui";
+import { RoomBackstage } from "./RoomBackstage";
 import { RoomArchiveDialog } from "./RoomDialogs";
 import { RoomRequestCard } from "./RoomRequestCard";
-import { activeRoomMembers, backstageForMember, pendingRoomRequests } from "./room-model";
+import { pendingRoomRequests } from "./room-model";
 import type { RoomsStore, RoomTab } from "./rooms-store";
 
 interface RoomViewProps {
@@ -15,6 +16,8 @@ interface RoomViewProps {
   nameOfBot: (botId: string) => string | undefined;
   /** Request whose bot is being created now; its card stays disabled until creation ends. */
   creatingRequestId: string | null;
+  /** Members with a turn or a delivery in progress now; the backstage shows them as working. */
+  workingBotIds?: ReadonlySet<string>;
   onCreateBotForRequest: (request: RoomRequest) => void;
   /** The conversation with the room manager, rendered with the normal conversation and composer. */
   renderConversation: () => JSX.Element;
@@ -50,6 +53,7 @@ export function RoomView(props: RoomViewProps) {
           room={current}
           nameOfBot={props.nameOfBot}
           creatingRequestId={props.creatingRequestId}
+          workingBotIds={props.workingBotIds}
           onCreateBotForRequest={props.onCreateBotForRequest}
           renderConversation={props.renderConversation}
         />
@@ -63,6 +67,7 @@ interface RoomContentProps {
   room: () => Room;
   nameOfBot: (botId: string) => string | undefined;
   creatingRequestId: string | null;
+  workingBotIds?: ReadonlySet<string>;
   onCreateBotForRequest: (request: RoomRequest) => void;
   renderConversation: () => JSX.Element;
 }
@@ -96,62 +101,8 @@ function RoomContent(props: RoomContentProps) {
     return name ?? t("rooms.request.unknownBot");
   }
 
-  function backstageList() {
-    const filter = () => store.memberFilter();
-    const messages = () => {
-      const all = store.backstage(props.room().id);
-      return filter() ? backstageForMember(all, filter() ?? "") : all;
-    };
-    return (
-      <section class="rooms-backstage" aria-label={t("rooms.view.backstage")}>
-        <p class="rooms-view-notice">{t("rooms.view.backstageNotice")}</p>
-        <div class="rooms-backstage-filters">
-          <Button
-            size="sm"
-            variant={filter() ? "ghost" : "secondary"}
-            aria-pressed={filter() === null ? "true" : "false"}
-            onClick={() => store.setMemberFilter(null)}
-          >
-            {t("rooms.view.allMembers")}
-          </Button>
-          <For each={activeRoomMembers(props.room())}>
-            {(member) => (
-              <Button
-                size="sm"
-                variant={filter() === member.botId ? "secondary" : "ghost"}
-                aria-pressed={filter() === member.botId ? "true" : "false"}
-                aria-label={t("rooms.view.filterMember", { name: member.name })}
-                onClick={() => store.setMemberFilter(member.botId)}
-              >
-                {member.name}
-              </Button>
-            )}
-          </For>
-        </div>
-        <Show when={messages().length > 0} fallback={<p class="rooms-view-empty">{t("rooms.view.backstageEmpty")}</p>}>
-          <ol class="rooms-backstage-list">
-            <For each={messages()}>
-              {(message) => (
-                <li class="rooms-backstage-message">
-                  <div class="rooms-backstage-meta">
-                    <strong>{message.authorName}</strong>
-                    <span>{message.recipientBotIds.map((botId) => memberName(botId) ?? botId).join(", ")}</span>
-                    <time datetime={message.createdAt}>
-                      {new Date(message.createdAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
-                    </time>
-                  </div>
-                  <p class="rooms-backstage-text">{message.text}</p>
-                  <Show when={message.attachmentNames.length > 0}>
-                    <p class="rooms-backstage-attachments">{message.attachmentNames.join(", ")}</p>
-                  </Show>
-                </li>
-              )}
-            </For>
-          </ol>
-        </Show>
-      </section>
-    );
-  }
+  // The backstage failure is shown inside the Bastidores panel, so the top alert skips it.
+  const visibleError = () => (store.error() === "rooms.error.backstageFailed" ? null : store.error());
 
   return (
     <div class="rooms-view">
@@ -185,7 +136,7 @@ function RoomContent(props: RoomContentProps) {
           {t("rooms.view.archivedNotice")}
         </p>
       </Show>
-      <Show when={store.error()}>
+      <Show when={visibleError()}>
         {(key) => (
           <p class="rooms-sidebar-error" role="alert">
             {t(key())}
@@ -231,8 +182,8 @@ function RoomContent(props: RoomContentProps) {
           </Show>
           {props.renderConversation()}
         </Tabs.Content>
-        <Tabs.Content value="backstage" class="rooms-view-panel">
-          {backstageList()}
+        <Tabs.Content value="backstage" class="rooms-view-panel rooms-view-backstage">
+          <RoomBackstage store={store} room={props.room} workingBotIds={props.workingBotIds} />
         </Tabs.Content>
       </Tabs.Root>
 

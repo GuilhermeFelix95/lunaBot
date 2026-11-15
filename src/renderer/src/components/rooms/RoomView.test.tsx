@@ -1,5 +1,5 @@
 import type { Room, RoomBackstageMessage, RoomMember, RoomRequest, RoomsDesktopApi } from "@lunabot/contracts/ipc";
-import { cleanup, fireEvent, render, screen, waitFor } from "@solidjs/testing-library";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@solidjs/testing-library";
 import { flush } from "solid-js";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { RoomView } from "./RoomView";
@@ -39,6 +39,15 @@ const hireRequest: RoomRequest = {
   resolvedAt: null,
 };
 
+const reviewer: RoomMember = {
+  botId: "reviewer",
+  name: "Reviewer",
+  role: "member",
+  status: "active",
+  addedAt: timestamp,
+  dismissedAt: null,
+};
+
 const room: Room = {
   id: "room-1",
   name: "Launch plan",
@@ -50,6 +59,8 @@ const room: Room = {
   members: [manager, writer],
   requests: [hireRequest],
 };
+
+const teamRoom: Room = { ...room, members: [manager, writer, reviewer] };
 
 function createApi(overrides: Partial<RoomsDesktopApi> = {}): RoomsDesktopApi {
   const unused = async (): Promise<never> => {
@@ -109,7 +120,7 @@ describe("RoomView", () => {
     await waitFor(() => expect(resolveRequest).toHaveBeenCalledWith({ requestId: "req-hire", decision: "approve" }));
   });
 
-  it("shows only one member's backstage messages when that member's filter is pressed", async () => {
+  it("opens the conversation of the member chosen in the sidebar", async () => {
     const messages: RoomBackstageMessage[] = [
       {
         id: "m1",
@@ -124,31 +135,24 @@ describe("RoomView", () => {
         id: "m2",
         authorBotId: "manager",
         authorName: "Room manager",
-        recipientBotIds: ["unrelated-bot"],
-        text: "Note for someone else",
+        recipientBotIds: ["reviewer"],
+        text: "Reviewer note",
         attachmentNames: [],
-        createdAt: timestamp,
+        createdAt: "2026-01-01T01:00:00.000Z",
       },
     ];
-    const store = await loadedStore(createApi({ backstage: async () => messages }));
+    const store = await loadedStore(createApi({ list: async () => [teamRoom], backstage: async () => messages }));
     renderRoomView(store);
-    store.setTab("backstage");
+
+    // Without a member the most recent conversation (the reviewer's) would open.
+    store.openRoom("room-1", { tab: "backstage", memberBotId: "writer" });
     flush();
 
-    const filter = await screen.findByRole("button", { name: "Show only Writer" });
-    expect(await screen.findByText("Note for someone else")).toBeInTheDocument();
-
-    fireEvent.click(filter);
-
-    await waitFor(() => {
-      flush();
-      expect(filter).toHaveAttribute("aria-pressed", "true");
-    });
-    await waitFor(() => {
-      flush();
-      expect(screen.queryByText("Note for someone else")).not.toBeInTheDocument();
-    });
-    expect(screen.getByText("Draft for the writer")).toBeInTheDocument();
+    const selected = await screen.findByRole("option", { selected: true });
+    expect(selected).toHaveTextContent("Writer");
+    const log = await screen.findByRole("log");
+    expect(await within(log).findByText("Draft for the writer")).toBeInTheDocument();
+    expect(within(log).queryByText("Reviewer note")).not.toBeInTheDocument();
   });
 
   it("says the room is missing when it is not in the list", async () => {
