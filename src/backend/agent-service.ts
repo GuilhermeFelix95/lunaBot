@@ -129,6 +129,7 @@ import {
 import { LUNABOT_ROOM_DYNAMIC_TOOLS, LUNABOT_ROOM_NAMESPACE } from "./lunabot-room-tools";
 import { LUNABOT_DYNAMIC_TOOLS } from "./lunabot-tools";
 import type { DeliveryContext, GeneratedAttachmentSource, MailboxStore } from "./mailbox-store";
+import { withTimeout } from "./promise-timeout";
 import {
   type AccountLoginCompletedResult,
   type AccountRateLimitResult,
@@ -282,6 +283,7 @@ type PendingMemoryMutation =
 
 const CONTEXT_COMPACTION_THRESHOLD = 0.8;
 const CONTEXT_COMPACTION_TIMEOUT_MS = 120_000;
+const PROVIDER_START_TIMEOUT_MS = 90_000;
 const CODEX_LOGIN_TIMEOUT_MS = 10 * 60_000;
 const CLAUDE_LOGIN_TIMEOUT_MS = 10 * 60_000;
 const GROK_LOGIN_TIMEOUT_MS = 10 * 60_000;
@@ -1227,7 +1229,11 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       });
       this.#providerStarts.set(provider, start);
     }
-    await start;
+    await withTimeout(
+      start,
+      PROVIDER_START_TIMEOUT_MS,
+      nativeMessage("errors.provider.startTimedOut", { label: providerLabel(provider) }),
+    );
     if (this.#clients.has(provider)) return;
     const status = this.#status.providers?.find((candidate) => candidate.id === provider);
     throw new Error(status?.message ?? nativeMessage("errors.provider.notReady", { label: providerLabel(provider) }));
@@ -3965,7 +3971,12 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     budget.contextWindow = contextWindow;
     this.#contextBudgets.set(threadId, budget);
 
-    const pressured = usedTokens / contextWindow >= CONTEXT_COMPACTION_THRESHOLD;
+    // A provider that knows its own trigger (Claude's compact window) reports it; otherwise use a share of the window.
+    const compactAtTokens = finiteNumberOrNull(usage?.compactAtTokens);
+    const pressured =
+      compactAtTokens === null
+        ? usedTokens / contextWindow >= CONTEXT_COMPACTION_THRESHOLD
+        : usedTokens >= compactAtTokens;
     if (!pressured) {
       budget.pending = false;
       budget.lastCompactedTokens = null;

@@ -13,13 +13,14 @@ import {
   tool,
 } from "@anthropic-ai/claude-agent-sdk";
 import { INPUT_LIMITS } from "@lunabot/contracts/input-limits";
-import { type DynamicRecord, isOneOf, isString } from "@lunabot/contracts/runtime-values";
+import { type DynamicRecord, isNumber, isOneOf, isString } from "@lunabot/contracts/runtime-values";
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import { z } from "zod";
 import { nativeMessage } from "../main/native-messages";
 import type { AgentProvider } from "./agent-client";
 import type { ClaudeCliInfo } from "./cli";
 import { LUNABOT_ROOM_NAMESPACE } from "./lunabot-room-tools";
+import { withTimeout } from "./promise-timeout";
 import {
   type AccountReadResult,
   type AppServerNotification,
@@ -59,6 +60,11 @@ interface ThreadConfig {
 // Agent is the current name of the subagent tool; Task is the name older Claude Code builds use.
 const SUBAGENT_TOOL_NAMES = ["Agent", "Task"];
 const TASK_DESCRIPTION_LIMIT = 120;
+/** A question nobody answers must not hold the bot's queue forever. */
+const USER_QUESTION_TIMEOUT_MS = 30 * 60_000;
+const SET_MODEL_TIMEOUT_MS = 30_000;
+/** Context window assumed when the SDK has not reported one yet. */
+const FALLBACK_CONTEXT_WINDOW = 200_000;
 const TERMINAL_TASK_STATUSES = new Set(["completed", "failed", "killed"]);
 
 interface ActiveTurn {
@@ -68,6 +74,8 @@ interface ActiveTurn {
   assistantMessages: Map<string, string>;
   /** Opened by background work that answered with no user turn in flight. It has no user bubble and closes on the next result. */
   autonomous: boolean;
+  /** A housekeeping turn such as /compact: it runs, but its reply never reaches the conversation. */
+  silent?: boolean;
 }
 
 interface ThreadRuntime {
@@ -81,6 +89,9 @@ interface ThreadRuntime {
   /** Running SDK tasks by task id. The SDK's background_tasks_changed level signal replaces this set. */
   backgroundTasks: Map<string, string>;
   reportedBackgroundTasks: string;
+  /** Tokens the conversation held at its latest model call, and the window the SDK reported for the model. */
+  contextTokens: number;
+  contextWindow: number | null;
 }
 
 interface PendingServerRequest {
@@ -104,6 +115,7 @@ interface ClaudeStreamMessage {
   is_backgrounded?: boolean;
   patch?: unknown;
   tasks?: unknown;
+  modelUsage?: unknown;
 }
 
 interface ClaudeQuery extends AsyncIterable<ClaudeStreamMessage> {
@@ -211,9 +223,12 @@ export class ClaudeAgentClient extends EventEmitter<ClientEvents> {
         await runtime.query.interrupt();
         return decoder({});
       }
-      case "thread/compact/start":
-        // Claude Code manages its own context compaction.
+      case "thread/compact/start": {
+        // Claude Code compacts through its own /compact command, which runs as a turn of its own.
+        const threadId = requiredString(params, "threadId");
+        await this.#startTurn({ threadId, silentTurn: "true", input: [{ type: "text", text: "/compact" }] });
         return decoder({});
+      }
       default:
         throw new Error(`Claude adapter does not implement ${method}.`);
     }
@@ -385,6 +400,8 @@ export class ClaudeAgentClient extends EventEmitter<ClientEvents> {
       consume: Promise.resolve(),
       backgroundTasks: new Map(),
       reportedBackgroundTasks: "[]",
+      contextTokens: 0,
+      contextWindow: null,
     };
     runtime.consume = this.#consume(runtime);
     this.#threads.set(threadId, runtime);
@@ -398,7 +415,11 @@ export class ClaudeAgentClient extends EventEmitter<ClientEvents> {
     const requestedModel = getString(params, "model");
     const modelChanged = Boolean(requestedModel && requestedModel !== runtime.config.model);
     if (requestedModel && modelChanged) {
-      await runtime.query.setModel(this.#sdkModel(requestedModel));
+      await withTimeout(
+        runtime.query.setModel(this.#sdkModel(requestedModel)),
+        SET_MODEL_TIMEOUT_MS,
+        nativeMessage("errors.claude.setModelTimedOut"),
+      );
       runtime.config.model = requestedModel;
     }
     const requestedEffort = getString(params, "effort");
@@ -422,6 +443,7 @@ export class ClaudeAgentClient extends EventEmitter<ClientEvents> {
       text: "",
       assistantMessages: new Map<string, string>(),
       autonomous: false,
+      silent: getString(params, "silentTurn") === "true",
     };
     runtime.activeTurn = activeTurn;
     this.emit("notification", {
@@ -496,6 +518,7 @@ export class ClaudeAgentClient extends EventEmitter<ClientEvents> {
 
     if (message.type === "assistant") {
       if (message.parent_tool_use_id !== null) return;
+      this.#reportContextUsage(runtime, message.message);
       const text = messageText(message.message);
       if (!text || !message.uuid) return;
       const turn = runtime.activeTurn ?? this.#openAutonomousTurn(runtime);
@@ -513,6 +536,7 @@ export class ClaudeAgentClient extends EventEmitter<ClientEvents> {
     }
 
     if (message.type !== "result") return;
+    this.#rememberContextWindow(runtime, message.modelUsage);
     const fallback = message.subtype === "success" ? message.result : "";
     const errors = message.errors ?? [];
     const turn = runtime.activeTurn;
@@ -529,10 +553,47 @@ export class ClaudeAgentClient extends EventEmitter<ClientEvents> {
     this.#completeTurn(runtime, status, errors.length > 0 ? errors.join("\n") : null);
   }
 
+  // The usage of a model call is the conversation size at that call: fresh input plus everything read from or written to the cache.
+  #reportContextUsage(runtime: ThreadRuntime, message: unknown): void {
+    const usage = isRecord(message) && isRecord(message.usage) ? message.usage : null;
+    if (!usage) return;
+    const count = (value: unknown) => (isNumber(value) && Number.isFinite(value) ? value : 0);
+    const tokens =
+      count(usage.input_tokens) +
+      count(usage.cache_creation_input_tokens) +
+      count(usage.cache_read_input_tokens) +
+      count(usage.output_tokens);
+    if (tokens <= 0) return;
+    runtime.contextTokens = tokens;
+    const compactAtTokens = this.#claudeCompactWindow();
+    this.emit("notification", {
+      method: "thread/tokenUsage/updated",
+      params: {
+        threadId: runtime.id,
+        tokenUsage: {
+          last: { totalTokens: tokens },
+          modelContextWindow: runtime.contextWindow ?? FALLBACK_CONTEXT_WINDOW,
+          ...(compactAtTokens === null ? {} : { compactAtTokens }),
+        },
+      },
+    });
+  }
+
+  #rememberContextWindow(runtime: ThreadRuntime, modelUsage: unknown): void {
+    if (!isRecord(modelUsage)) return;
+    for (const entry of Object.values(modelUsage)) {
+      if (isRecord(entry) && isNumber(entry.contextWindow) && entry.contextWindow > 0) {
+        runtime.contextWindow = entry.contextWindow;
+        return;
+      }
+    }
+  }
+
   #appendDelta(runtime: ThreadRuntime, delta: string): void {
     if (!delta) return;
     const turn = runtime.activeTurn ?? this.#openAutonomousTurn(runtime);
     turn.text += delta;
+    if (turn.silent) return;
     this.emit("notification", {
       method: "item/agentMessage/delta",
       params: {
@@ -547,14 +608,16 @@ export class ClaudeAgentClient extends EventEmitter<ClientEvents> {
   #completeTurn(runtime: ThreadRuntime, status: string, error: unknown): void {
     const turn = runtime.activeTurn;
     if (!turn) return;
-    this.emit("notification", {
-      method: "item/completed",
-      params: {
-        threadId: runtime.id,
-        turnId: turn.id,
-        item: { id: turn.itemId, type: "agentMessage", text: turn.text },
-      },
-    });
+    if (!turn.silent) {
+      this.emit("notification", {
+        method: "item/completed",
+        params: {
+          threadId: runtime.id,
+          turnId: turn.id,
+          item: { id: turn.itemId, type: "agentMessage", text: turn.text },
+        },
+      });
+    }
     if (status === "failed" && error) {
       this.emit("notification", {
         method: "error",
@@ -857,7 +920,7 @@ export class ClaudeAgentClient extends EventEmitter<ClientEvents> {
       namespace,
       tool: name,
       arguments: args,
-    });
+    }).promise;
     if (!isRecord(result)) return { content: [{ type: "text" as const, text: String(result) }] };
     const content: CallToolResult["content"] = [];
     if (Array.isArray(result.contentItems)) {
@@ -875,12 +938,21 @@ export class ClaudeAgentClient extends EventEmitter<ClientEvents> {
       question: isString(question.question) ? question.question : nativeMessage("errors.claude.questionFallback"),
       options: Array.isArray(question.options) ? question.options : undefined,
     }));
-    const result = await this.#callServerRequest("item/tool/requestUserInput", {
+    const request = this.#callServerRequest("item/tool/requestUserInput", {
       threadId,
       turnId: runtime.activeTurn?.id ?? randomUUID(),
       itemId: toolUseId,
       questions,
     });
+    const result = await withTimeout(
+      request.promise,
+      USER_QUESTION_TIMEOUT_MS,
+      nativeMessage("errors.claude.questionTimedOut"),
+    ).catch((error: unknown) => {
+      this.#pendingServerRequests.delete(request.id);
+      return error instanceof Error ? error : new Error(String(error));
+    });
+    if (result instanceof Error) return { behavior: "deny", message: result.message };
     const responseAnswers = isRecord(result) && isRecord(result.answers) ? result.answers : {};
     const answers = Object.fromEntries(
       questions.map((question) => {
@@ -892,12 +964,13 @@ export class ClaudeAgentClient extends EventEmitter<ClientEvents> {
     return { behavior: "allow", updatedInput: { questions: input.questions, answers } };
   }
 
-  #callServerRequest(method: string, params: unknown): Promise<unknown> {
+  #callServerRequest(method: string, params: unknown): { id: string; promise: Promise<unknown> } {
     const id = randomUUID();
-    return new Promise((resolve, reject) => {
+    const promise = new Promise<unknown>((resolve, reject) => {
       this.#pendingServerRequests.set(id, { resolve, reject });
       this.emit("request", { id, method, params });
     });
+    return { id, promise };
   }
 
   #requireThread(threadId: string): ThreadRuntime {
