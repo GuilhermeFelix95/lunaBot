@@ -8,6 +8,15 @@ export function readAppVariant(value: string | undefined, isPackaged: boolean): 
   return isPackaged ? "production" : "dev";
 }
 
+/**
+ * The Windows taskbar looks up a window's icon through the shortcut that carries the same AppUserModelID. The installer
+ * writes the production id on its shortcuts, so an unpackaged run must use a different one, or its Electron shortcut
+ * competes with the installed app's and the taskbar shows the Electron icon.
+ */
+export function windowsAppUserModelId(isPackaged: boolean): "app.lunabot.desktop" | "app.lunabot.desktop.dev" {
+  return isPackaged ? "app.lunabot.desktop" : "app.lunabot.desktop.dev";
+}
+
 export function appIconFileName(variant: AppVariant, platform: NodeJS.Platform): string {
   return platform === "darwin" ? `icon-${variant}-macos-safe-area.png` : `icon-${variant}.png`;
 }
