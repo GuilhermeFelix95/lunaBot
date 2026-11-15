@@ -22,7 +22,6 @@ export class StickToBottom {
   #pinned = true;
   #pinnedListeners = new Set<(pinned: boolean) => void>();
   #lastScrollTop = 0;
-  #lastScrollHeight: number | undefined;
   #programmatic: { target: number | undefined; until: number } | undefined;
   #scrollbarDragging = false;
 
@@ -65,15 +64,14 @@ export class StickToBottom {
   }
 
   /**
-   * Reads one scroll event. Content that grew or shrank under the viewport does not release
-   * the stick: only an upward scroll that is not caused by a content change (or any upward
-   * scroll while the scrollbar is dragged) does. Scrolling back down to the end resumes it.
+   * Reads one scroll event. Content that grew or shrank under the viewport never releases the
+   * stick, and neither does a bare upward scroll: wheel, touch and keys release through their own
+   * events, and an upward scroll while the scrollbar is dragged releases here. Scrolling back down
+   * to the end resumes it.
    */
   observeScroll(snapshot: StickScrollSnapshot, now: number): void {
     const previousTop = this.#lastScrollTop;
-    const contentChanged = this.#lastScrollHeight !== undefined && snapshot.scrollHeight !== this.#lastScrollHeight;
     this.#lastScrollTop = snapshot.scrollTop;
-    this.#lastScrollHeight = snapshot.scrollHeight;
 
     const programmatic = this.#programmatic;
     if (programmatic && now < programmatic.until) {
@@ -88,7 +86,9 @@ export class StickToBottom {
     this.#programmatic = undefined;
 
     if (snapshot.scrollTop < previousTop - MOVEMENT_TOLERANCE_PX) {
-      if (this.#scrollbarDragging || !contentChanged) this.#setPinned(false);
+      // Wheel, touch and keys release on their own events. A bare upward scroll cannot be told from layout that
+      // grew and shrank between two frames, so only a scrollbar drag counts as the reader moving up.
+      if (this.#scrollbarDragging) this.#setPinned(false);
       return;
     }
     if (snapshot.scrollTop > previousTop && distanceFromBottom(snapshot) <= STICK_TO_BOTTOM_RESUME_DISTANCE) {
