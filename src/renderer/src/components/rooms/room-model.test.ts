@@ -3,16 +3,21 @@ import { ROOM_ACTIVE_BOT_LIMIT, ROOM_NAME_MAX_LENGTH } from "@lunabot/contracts/
 import { describe, expect, it } from "vitest";
 import {
   activeRoomMembers,
+  type BackstageConversation,
+  backstageConversations,
   backstageForMember,
   canPurgeRoom,
   canSelectRoomBot,
   dismissedRoomMembers,
   hasRoomActivity,
   pendingRoomRequests,
+  plainPreview,
   roomIdOfBot,
   roomManager,
   roomNameError,
+  selectedBackstageBotId,
   toggleRoomBot,
+  toResponseTime,
 } from "./room-model";
 
 describe("roomNameError", () => {
@@ -167,6 +172,143 @@ describe("canPurgeRoom", () => {
     expect(canPurgeRoom(room, "  Launch plan  ")).toBe(true);
     expect(canPurgeRoom(room, "Launch")).toBe(false);
     expect(canPurgeRoom(room, "")).toBe(false);
+  });
+});
+
+describe("plainPreview", () => {
+  it("turns markdown into one plain line", () => {
+    expect(plainPreview("**Olá**, `code` e [site](https://x.test)\n## Título")).toBe("Olá, code e site Título");
+  });
+
+  it("keeps underscores that are part of a word", () => {
+    expect(plainPreview("snake_case_name e _ênfase_")).toBe("snake_case_name e ênfase");
+  });
+});
+
+describe("toResponseTime", () => {
+  it("uses seconds, minutes and hours by size", () => {
+    expect(toResponseTime(45_000)).toEqual({ unit: "seconds", value: 45 });
+    expect(toResponseTime(59_999)).toEqual({ unit: "seconds", value: 59 });
+    expect(toResponseTime(60_000)).toEqual({ unit: "minutes", value: 1 });
+    expect(toResponseTime(3_600_000)).toEqual({ unit: "hours", value: 1 });
+  });
+});
+
+describe("backstageConversations", () => {
+  const at = (time: string) => `2026-01-01T${time}.000Z`;
+  const note = (
+    id: string,
+    authorBotId: string,
+    recipientBotIds: string[],
+    createdAt: string,
+    text = id,
+  ): RoomBackstageMessage => ({
+    id,
+    authorBotId,
+    authorName: authorBotId,
+    recipientBotIds,
+    text,
+    attachmentNames: [],
+    createdAt,
+  });
+  const team: Room = {
+    ...room,
+    requests: [],
+    members: [
+      member("manager", "manager"),
+      member("writer", "member"),
+      member("reviewer", "member"),
+      member("quiet", "member"),
+    ],
+  };
+  const messages = [
+    note("a", "manager", ["writer"], at("10:00:00")),
+    note("b", "writer", ["manager"], at("10:01:30")),
+    note("c", "reviewer", ["writer"], at("11:00:00")),
+    note("e", "manager", ["reviewer"], at("12:00:00"), "Veja [o plano](https://x.test)"),
+  ];
+  const ids = (list: BackstageConversation[], botId: string) =>
+    list.find((conversation) => conversation.botId === botId)?.messages.map((item) => item.id);
+
+  it("groups messages per active member, and a message between two members appears in both", () => {
+    const list = backstageConversations(team, messages, { seenAt: {} });
+
+    expect(ids(list, "writer")).toEqual(["a", "b", "c"]);
+    expect(ids(list, "reviewer")).toEqual(["c", "e"]);
+    expect(list.find((conversation) => conversation.botId === "quiet")?.count).toBe(0);
+  });
+
+  it("orders the most recent conversation first and lists members without messages last", () => {
+    const list = backstageConversations(team, messages, { seenAt: {} });
+
+    expect(list.map((conversation) => conversation.botId)).toEqual(["reviewer", "writer", "quiet"]);
+  });
+
+  it("reports done, waiting, working and idle states", () => {
+    const stateOf = (list: BackstageConversation[], botId: string) =>
+      list.find((conversation) => conversation.botId === botId)?.state;
+
+    const waiting = backstageConversations(team, messages, { seenAt: {} });
+    expect(stateOf(waiting, "writer")).toBe("waiting");
+    expect(stateOf(waiting, "reviewer")).toBe("waiting");
+    expect(stateOf(waiting, "quiet")).toBe("idle");
+
+    const working = backstageConversations(team, messages, { seenAt: {}, workingBotIds: new Set(["reviewer"]) });
+    expect(stateOf(working, "reviewer")).toBe("working");
+    expect(stateOf(working, "writer")).toBe("waiting");
+
+    const answered = backstageConversations(team, [messages[0], messages[1]], { seenAt: {} });
+    expect(stateOf(answered, "writer")).toBe("done");
+  });
+
+  it("shows the last message as one plain line", () => {
+    const list = backstageConversations(team, messages, { seenAt: {} });
+
+    expect(list[0]?.preview).toBe("Veja o plano");
+    expect(list[0]?.lastMessage?.id).toBe("e");
+  });
+
+  it("measures the last request-to-answer time", () => {
+    const list = backstageConversations(team, messages, { seenAt: {} });
+    expect(list.find((conversation) => conversation.botId === "writer")?.responseTime).toEqual({
+      unit: "minutes",
+      value: 1,
+    });
+    expect(list.find((conversation) => conversation.botId === "reviewer")?.responseTime).toBeNull();
+
+    const quick = [note("q", "manager", ["writer"], at("10:00:00")), note("r", "writer", ["manager"], at("10:00:45"))];
+    const fast = backstageConversations(team, quick, { seenAt: {} });
+    expect(fast.find((conversation) => conversation.botId === "writer")?.responseTime).toEqual({
+      unit: "seconds",
+      value: 45,
+    });
+  });
+
+  it("is unread when its last message is newer than the member's last seen time", () => {
+    const unreadOf = (list: BackstageConversation[], botId: string) =>
+      list.find((conversation) => conversation.botId === botId)?.unread;
+
+    const never = backstageConversations(team, messages, { seenAt: {} });
+    expect(unreadOf(never, "writer")).toBe(true);
+    expect(unreadOf(never, "quiet")).toBe(false);
+
+    const caughtUp = backstageConversations(team, messages, {
+      seenAt: { writer: at("11:00:00"), reviewer: at("12:30:00") },
+    });
+    expect(unreadOf(caughtUp, "writer")).toBe(false);
+    expect(unreadOf(caughtUp, "reviewer")).toBe(false);
+
+    const behind = backstageConversations(team, messages, { seenAt: { writer: at("10:30:00") } });
+    expect(unreadOf(behind, "writer")).toBe(true);
+  });
+
+  it("opens the requested member, else the most recent conversation, else null", () => {
+    const list = backstageConversations(team, messages, { seenAt: {} });
+
+    expect(selectedBackstageBotId(list, "writer")).toBe("writer");
+    expect(selectedBackstageBotId(list, null)).toBe("reviewer");
+    expect(selectedBackstageBotId(list, "former-member")).toBe("reviewer");
+    expect(selectedBackstageBotId([], null)).toBeNull();
   });
 });
 
