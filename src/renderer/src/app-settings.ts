@@ -3,6 +3,7 @@ import {
   type BusyMessageMode,
   DEFAULT_AGENT_MEMORY_LIMIT,
   DEFAULT_BUSY_MESSAGE_MODE,
+  DEFAULT_CLAUDE_COMPACT_WINDOW,
   DEFAULT_WINDOW_CLOSE_BEHAVIOR,
   type WindowCloseBehavior,
 } from "@lunabot/contracts/ipc";
@@ -39,6 +40,6 @@ export const DEFAULT_GENERAL_SETTINGS: GeneralSettingsValue = {
   taskCompletionSound: false,
   autoDownloadUpdates: true,
   agentMemoryLimit: DEFAULT_AGENT_MEMORY_LIMIT,
-  claudeCompactWindow: null,
+  claudeCompactWindow: DEFAULT_CLAUDE_COMPACT_WINDOW,
   busyMessageMode: DEFAULT_BUSY_MESSAGE_MODE,
 };

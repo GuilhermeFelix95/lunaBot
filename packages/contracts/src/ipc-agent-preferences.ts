@@ -40,6 +40,8 @@ export function isApprovalPolicyMode(value: unknown): value is ApprovalPolicyMod
 
 export const CLAUDE_COMPACT_WINDOW_MIN = 100_000;
 export const CLAUDE_COMPACT_WINDOW_MAX = 1_000_000;
+/** Window at which a Claude conversation compacts when the user has not chosen one. */
+export const DEFAULT_CLAUDE_COMPACT_WINDOW = 200_000;
 
 export function isClaudeCompactWindow(value: unknown): value is number {
   return (

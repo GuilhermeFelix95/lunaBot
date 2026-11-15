@@ -5,6 +5,7 @@ import {
   type BusyMessageMode,
   DEFAULT_AGENT_MEMORY_LIMIT,
   DEFAULT_BUSY_MESSAGE_MODE,
+  DEFAULT_CLAUDE_COMPACT_WINDOW,
   DEFAULT_WINDOW_CLOSE_BEHAVIOR,
   isAgentMemoryLimit,
   isBusyMessageMode,
@@ -26,7 +27,7 @@ export interface AgentPreferences {
 
 const DEFAULT_PREFERENCES: AgentPreferences = {
   memoryLimit: DEFAULT_AGENT_MEMORY_LIMIT,
-  claudeCompactWindow: null,
+  claudeCompactWindow: DEFAULT_CLAUDE_COMPACT_WINDOW,
   busyMessageMode: DEFAULT_BUSY_MESSAGE_MODE,
   windowCloseBehavior: DEFAULT_WINDOW_CLOSE_BEHAVIOR,
 };

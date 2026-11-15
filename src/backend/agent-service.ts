@@ -86,6 +86,7 @@ import {
   BACKGROUND_TASK_INTERRUPTED_ITEM_TYPE,
   DEFAULT_APPROVAL_POLICY_MODE,
   DEFAULT_BUSY_MESSAGE_MODE,
+  DEFAULT_CLAUDE_COMPACT_WINDOW,
   isImageGenerationAspectRatio,
   isMessageReaction,
   isReasoningEffort,
@@ -383,7 +384,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
   readonly #browser: AgentBrowserHost;
   readonly #conversationReads: ConversationReadStore;
   readonly #memories: AgentMemoryStore;
-  #claudeCompactWindow: number | null = null;
+  #claudeCompactWindow: number | null = DEFAULT_CLAUDE_COMPACT_WINDOW;
   #busyMessageMode: BusyMessageMode = DEFAULT_BUSY_MESSAGE_MODE;
   readonly #approvalPolicies = new Map<string, ApprovalPolicyMode>();
   #approvalPolicyFile: string | null = null;
@@ -4074,7 +4075,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     await this.#mailbox.enqueue({
       sender: { kind: "bot", botId },
       recipientBotIds: [recipientBotId],
-      text,
+      text: text.length > INPUT_LIMITS.messageText ? text.slice(0, INPUT_LIMITS.messageText) : text,
       replyToMessageId: messageId,
       idempotencyKey: `auto-result:${turnId}:${messageId}`,
     });
