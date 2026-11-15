@@ -205,12 +205,20 @@ function decodeFilePreview(value: unknown): FilePreview {
       preview.previewKind !== "text" &&
       preview.previewKind !== "image" &&
       preview.previewKind !== "pdf" &&
+      preview.previewKind !== "directory" &&
       preview.previewKind !== "none") ||
     (preview.bytes !== null && !(preview.bytes instanceof Uint8Array))
   ) {
     throw new Error("Invalid file preview response.");
   }
+  const entries = Array.isArray(preview.entries)
+    ? preview.entries.flatMap((entry) => {
+        if (!isDynamicRecord(entry) || !isString(entry.name)) return [];
+        return [{ name: entry.name, kind: entry.kind === "directory" ? ("directory" as const) : ("file" as const) }];
+      })
+    : undefined;
   return {
+    ...(entries ? { entries, entriesTruncated: preview.entriesTruncated === true } : {}),
     name: preview.name,
     size: preview.size,
     mimeType: preview.mimeType,

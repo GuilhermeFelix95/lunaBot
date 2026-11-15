@@ -69,7 +69,7 @@ import {
   dynamicIslandNotchSizeForDisplay,
   requireDynamicIslandSender,
 } from "./dynamic-island-window";
-import { localFilePreview } from "./file-preview";
+import { localDirectoryPreview, localFilePreview } from "./file-preview";
 import {
   parseAcknowledgeFailedTurn,
   parseApprovalResponse,
@@ -669,25 +669,29 @@ function registerIpcHandlers(
   });
   handleTrusted(IPC_CHANNELS.agentOpenSharedFile, async (input: unknown) => {
     const parsed = parseOpenSharedFile(input);
-    const sharedFile = await service.resolveSharedFile(parsed.path);
+    const sharedFile = await service.resolveSharedEntry(parsed.path);
     const openError = await shell.openPath(sharedFile.path);
     if (openError) throw new Error(openError);
   });
   handleTrusted(IPC_CHANNELS.agentOpenWorkspaceFile, async (input: unknown) => {
     const parsed = parseOpenWorkspaceFile(input);
-    const workspaceFile = await service.resolveWorkspaceFile(parsed.botId, parsed.path);
+    const workspaceFile = await service.resolveWorkspaceEntry(parsed.botId, parsed.path);
     const openError = await shell.openPath(workspaceFile.path);
     if (openError) throw new Error(openError);
   });
   handleTrusted(IPC_CHANNELS.agentPreviewSharedFile, async (input: unknown): Promise<FilePreview> => {
     const parsed = parseOpenSharedFile(input);
-    const sharedFile = await service.resolveSharedFile(parsed.path);
-    return localFilePreview(sharedFile.path, sharedFile.name, sharedFile.size);
+    const sharedEntry = await service.resolveSharedEntry(parsed.path);
+    return sharedEntry.isDirectory
+      ? localDirectoryPreview(sharedEntry.path, sharedEntry.name)
+      : localFilePreview(sharedEntry.path, sharedEntry.name, sharedEntry.size);
   });
   handleTrusted(IPC_CHANNELS.agentPreviewWorkspaceFile, async (input: unknown): Promise<FilePreview> => {
     const parsed = parseOpenWorkspaceFile(input);
-    const workspaceFile = await service.resolveWorkspaceFile(parsed.botId, parsed.path);
-    return localFilePreview(workspaceFile.path, workspaceFile.name, workspaceFile.size);
+    const workspaceEntry = await service.resolveWorkspaceEntry(parsed.botId, parsed.path);
+    return workspaceEntry.isDirectory
+      ? localDirectoryPreview(workspaceEntry.path, workspaceEntry.name)
+      : localFilePreview(workspaceEntry.path, workspaceEntry.name, workspaceEntry.size);
   });
   handleTrusted(IPC_CHANNELS.agentListQueue, (input: unknown) => {
     return service.listQueue(requireString(input, "botId"));

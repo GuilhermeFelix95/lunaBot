@@ -824,7 +824,7 @@ function workspaceFileTarget(value: string): string | null {
 }
 
 function workspaceFileName(path: string): string {
-  const name = path.replaceAll("\\", "/").split("/").at(-1) || "file";
+  const name = path.replaceAll("\\", "/").replace(/\/+$/u, "").split("/").at(-1) || "file";
   try {
     return decodeURIComponent(name);
   } catch {
@@ -847,7 +847,7 @@ function messageFileDirectory(body: string): FileDirectoryContext | null {
 
 function mentionedFileTarget(value: string, directory: FileDirectoryContext | null): FileDirectoryContext | null {
   const path = value.trim();
-  if (!isFileMention(path)) return null;
+  if (!isFileMention(path) && !isFolderMention(path)) return null;
   const shared = sharedFileTarget(path);
   if (shared) return { path: shared, kind: "shared" };
   if (/^(?:~[/\\]|[/\\]|[A-Za-z]:[/\\])/u.test(path)) {
@@ -860,6 +860,15 @@ function mentionedFileTarget(value: string, directory: FileDirectoryContext | nu
     path: `${directory.path.replace(/[/\\]+$/u, "")}${separator}${path}`,
     kind: directory.kind,
   };
+}
+
+// A folder is only recognised when it is unmistakably one: an absolute path, or a relative path that ends in a separator.
+function isFolderMention(value: string): boolean {
+  if (!value || /[\0\r\n\s]/u.test(value)) return false;
+  if (/[/\\]$/u.test(value)) return value.length > 1;
+  if (!/^(?:~[/\\]|\/|[A-Za-z]:[/\\])/u.test(value)) return false;
+  const segments = value.split(/[/\\]/u).filter(Boolean);
+  return segments.length >= 2 && !/\.[A-Za-z\d]+$/u.test(segments.at(-1) ?? "");
 }
 
 function isFileMention(value: string): boolean {

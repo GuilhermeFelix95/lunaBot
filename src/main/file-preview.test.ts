@@ -1,11 +1,11 @@
 // @vitest-environment node
 
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { ATTACHMENT_LIMITS } from "@lunabot/contracts/input-limits";
 import { afterEach, describe, expect, it } from "vitest";
-import { filePreviewFromBytes, localFilePreview, mimeTypeForName } from "./file-preview";
+import { filePreviewFromBytes, localDirectoryPreview, localFilePreview, mimeTypeForName } from "./file-preview";
 
 const temporaryDirectories: string[] = [];
 
@@ -47,5 +47,27 @@ describe("file previews", () => {
     await expect(
       localFilePreview("/does/not/need/to/exist", "large.txt", ATTACHMENT_LIMITS.fileBytes + 1),
     ).rejects.toThrow("100 MB");
+  });
+
+  it("lists a folder with its subfolders first and ignores nothing but special files", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "lunabot-folder-preview-"));
+    temporaryDirectories.push(directory);
+    await mkdir(join(directory, "zeta"));
+    await mkdir(join(directory, "alpha"));
+    await writeFile(join(directory, "b.txt"), "b");
+    await writeFile(join(directory, "a.md"), "a");
+
+    await expect(localDirectoryPreview(directory, "docs")).resolves.toMatchObject({
+      name: "docs",
+      previewKind: "directory",
+      bytes: null,
+      entriesTruncated: false,
+      entries: [
+        { name: "alpha", kind: "directory" },
+        { name: "zeta", kind: "directory" },
+        { name: "a.md", kind: "file" },
+        { name: "b.txt", kind: "file" },
+      ],
+    });
   });
 });

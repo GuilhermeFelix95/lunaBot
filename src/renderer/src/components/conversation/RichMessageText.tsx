@@ -9,6 +9,7 @@ import { AnchoredTooltip } from "./AnchoredTooltip";
 import { AttachmentReferenceVisual, attachmentReferenceTone } from "./AttachmentReference";
 import { LinkIcon } from "./ConversationIcons";
 import { messageFileReferences } from "./FileReference";
+import { findLocalPaths, isSharedLocalPath } from "./local-paths";
 
 export interface RichMessageTextProps {
   body: string;
@@ -106,6 +107,24 @@ export function RichMessageText(props: RichMessageTextProps) {
                 <AttachmentReferenceVisual name={name} />
                 <span class="inline-file-reference-name">{name}</span>
               </Button>
+            );
+          }
+          const localPath = part.localPath;
+          const openLocalPath = localPath
+            ? isSharedLocalPath(localPath)
+              ? props.onOpenSharedFile
+              : props.onOpenWorkspaceFile
+            : undefined;
+          if (localPath && openLocalPath) {
+            return (
+              <button
+                type="button"
+                class="message-local-path"
+                title={localPath}
+                onClick={() => openLocalPath(localPath)}
+              >
+                {localPath}
+              </button>
             );
           }
           if (part.url) {
@@ -285,6 +304,8 @@ interface RichMessagePart {
   citation?: MessageCitation;
   attachment?: AttachmentSummary;
   sharedPath?: string;
+  /** A path to a file or folder on this computer written in the text. */
+  localPath?: string;
   url?: string;
 }
 
@@ -303,11 +324,17 @@ function richMessageParts(
     for (const part of linkedMessageParts(referencedPart.text)) {
       if (part.url) parts.push(part);
       else {
-        for (const taggedPart of taggedMessageParts(part.text, bots)) {
-          if (taggedPart.bot) {
-            parts.push(taggedPart);
-          } else {
-            parts.push(...citedMessageParts(taggedPart.text, citationsByNumber));
+        for (const pathPart of localPathParts(part.text)) {
+          if (pathPart.localPath) {
+            parts.push(pathPart);
+            continue;
+          }
+          for (const taggedPart of taggedMessageParts(pathPart.text, bots)) {
+            if (taggedPart.bot) {
+              parts.push(taggedPart);
+            } else {
+              parts.push(...citedMessageParts(taggedPart.text, citationsByNumber));
+            }
           }
         }
       }
@@ -329,6 +356,20 @@ function referencedMessageParts(body: string, attachmentsById: Map<string, Attac
       parts.push({ text: reference.name, sharedPath: reference.path });
     }
     cursor = reference.end;
+  }
+  if (cursor < body.length) parts.push({ text: body.slice(cursor) });
+  return parts;
+}
+
+function localPathParts(body: string): RichMessagePart[] {
+  const mentions = findLocalPaths(body);
+  if (mentions.length === 0) return [{ text: body }];
+  const parts: RichMessagePart[] = [];
+  let cursor = 0;
+  for (const mention of mentions) {
+    if (mention.start > cursor) parts.push({ text: body.slice(cursor, mention.start) });
+    parts.push({ text: mention.path, localPath: mention.path });
+    cursor = mention.end;
   }
   if (cursor < body.length) parts.push({ text: body.slice(cursor) });
   return parts;

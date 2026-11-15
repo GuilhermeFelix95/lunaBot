@@ -8069,3 +8069,67 @@ button.chat-action-target:active,
 .voice-button-active:active {
   transform: scale(0.97);
 }
+
+.file-preview-entries {
+  display: grid;
+  margin: 0;
+  padding: 6px;
+  list-style: none;
+}
+
+.file-preview-entry {
+  display: flex;
+  width: 100%;
+  min-width: 0;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 8px;
+  border-radius: var(--lunabot-radius-md);
+  padding: 6px 8px;
+  text-align: left;
+  font-size: var(--lunabot-text-md);
+}
+
+.file-preview-entry span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.file-preview-entry-icon {
+  width: 16px;
+  height: 16px;
+  flex: none;
+  color: var(--lunabot-text-muted);
+}
+
+.file-preview-entry[data-entry-kind="directory"] .file-preview-entry-icon {
+  color: var(--lunabot-accent-text);
+}
+
+.message-local-path {
+  display: inline;
+  max-width: 100%;
+  border: 0;
+  background: none;
+  padding: 0;
+  color: var(--lunabot-accent-text);
+  font: inherit;
+  text-align: left;
+  text-decoration: underline;
+  text-decoration-color: color-mix(in srgb, currentColor 40%, transparent);
+  text-underline-offset: 2px;
+  overflow-wrap: anywhere;
+  cursor: pointer;
+}
+
+.message-local-path:hover {
+  text-decoration-color: currentColor;
+}
+
+.message-local-path:focus-visible {
+  outline: 2px solid var(--lunabot-focus-ring, currentColor);
+  outline-offset: 2px;
+  border-radius: var(--lunabot-radius-xs);
+}
