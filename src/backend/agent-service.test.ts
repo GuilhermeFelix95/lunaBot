@@ -557,6 +557,24 @@ describe.sequential("AgentService", () => {
     },
   );
 
+  it("resolves a folder inside the agent workspace as an entry but never as a file", async () => {
+    const { store, mailbox } = stores();
+    service = new AgentService(store, mailbox, fakeBrowser());
+    await service.initialize();
+
+    const bot = await store.createBot(CREATE_BOT_INPUT);
+    const folder = join(bot.workspacePath, "reports");
+    await mkdir(folder, { recursive: true });
+
+    await expect(service.resolveWorkspaceEntry(bot.id, "reports")).resolves.toMatchObject({
+      path: await realpath(folder),
+      name: "reports",
+      isDirectory: true,
+    });
+    await expect(service.resolveWorkspaceFile(bot.id, "reports")).rejects.toThrow();
+    await expect(service.resolveWorkspaceEntry(bot.id, join(root, "elsewhere"))).rejects.toThrow();
+  });
+
   it("does not surface the skills context-budget notice as an agent error", async () => {
     process.env.LUNABOT_FAKE_WARNING = "Skill descriptions were shortened to fit the skills context budget.";
     const { store, mailbox } = stores();

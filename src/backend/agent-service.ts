@@ -171,6 +171,10 @@ export interface ResolvedSharedFile {
   size: number;
 }
 
+export interface ResolvedLocalEntry extends ResolvedSharedFile {
+  isDirectory: boolean;
+}
+
 interface AgentBrowserHost {
   onChanged(listener: (tabs: BrowserTab[], activeTabId: string | null) => void): () => void;
   onControlChanged(listener: (state: BrowserControlState) => void): () => void;
@@ -1067,6 +1071,13 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
   }
 
   async resolveSharedFile(inputPath: string): Promise<ResolvedSharedFile> {
+    const entry = await this.resolveSharedEntry(inputPath);
+    if (entry.isDirectory) throw new Error(nativeMessage("errors.file.sharedNotFile"));
+    return entry;
+  }
+
+  /** Like resolveSharedFile, but a folder inside the shared area resolves too. */
+  async resolveSharedEntry(inputPath: string): Promise<ResolvedLocalEntry> {
     const sharedRoot = await realpath(this.#store.sharedRoot);
     const candidatePath = sharedPathFromInput(this.#store.sharedRoot, inputPath);
     const resolvedPath = await realpath(candidatePath);
@@ -1074,11 +1085,23 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       throw new Error(nativeMessage("errors.file.sharedOutside"));
     }
     const metadata = await stat(resolvedPath);
-    if (!metadata.isFile()) throw new Error(nativeMessage("errors.file.sharedNotFile"));
-    return { path: resolvedPath, name: basename(resolvedPath), size: metadata.size };
+    if (!metadata.isFile() && !metadata.isDirectory()) throw new Error(nativeMessage("errors.file.sharedNotFile"));
+    return {
+      path: resolvedPath,
+      name: basename(resolvedPath),
+      size: metadata.size,
+      isDirectory: metadata.isDirectory(),
+    };
   }
 
   async resolveWorkspaceFile(botId: string, inputPath: string): Promise<ResolvedSharedFile> {
+    const entry = await this.resolveWorkspaceEntry(botId, inputPath);
+    if (entry.isDirectory) throw new Error(nativeMessage("errors.file.workspaceNotFile"));
+    return entry;
+  }
+
+  /** Like resolveWorkspaceFile, but a folder inside the bot's workspace resolves too. */
+  async resolveWorkspaceEntry(botId: string, inputPath: string): Promise<ResolvedLocalEntry> {
     const bot = this.#store.list().find((candidate) => candidate.id === botId);
     if (!bot) throw new Error(`Unknown bot: ${botId}`);
     const workspaceRoot = await realpath(bot.workspacePath);
@@ -1088,8 +1111,13 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       throw new Error(nativeMessage("errors.file.workspaceOutside"));
     }
     const metadata = await stat(resolvedPath);
-    if (!metadata.isFile()) throw new Error(nativeMessage("errors.file.workspaceNotFile"));
-    return { path: resolvedPath, name: basename(resolvedPath), size: metadata.size };
+    if (!metadata.isFile() && !metadata.isDirectory()) throw new Error(nativeMessage("errors.file.workspaceNotFile"));
+    return {
+      path: resolvedPath,
+      name: basename(resolvedPath),
+      size: metadata.size,
+      isDirectory: metadata.isDirectory(),
+    };
   }
 
   async deleteBot(botId: string): Promise<void> {

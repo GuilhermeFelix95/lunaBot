@@ -3639,6 +3639,8 @@ export function ConversationPanels() {
           <Loading>
             <FilePreviewPanel
               preview={file().preview}
+              source={file().source}
+              path={file().path}
               bots={props.bots}
               defaultWidth={() =>
                 (conversationPanelElement()?.clientWidth || window.innerWidth) * BROWSER_PANEL_DEFAULT_RATIO

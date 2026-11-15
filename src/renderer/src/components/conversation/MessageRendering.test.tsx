@@ -325,6 +325,38 @@ describe("MessageBody", () => {
     expect(onOpenWorkspaceFile).not.toHaveBeenCalled();
   });
 
+  it("turns plain-text paths and backticked folders into controls that open them", async () => {
+    const onOpenSharedFile = vi.fn();
+    const onOpenWorkspaceFile = vi.fn();
+    const folder = "C:\\Users\\ana\\LunaBot\\Bots\\bot-1\\relatorios";
+    const sharedFile = "~/LunaBot/Shared/notas.txt";
+    render(() => (
+      <MessageBody
+        message={{
+          id: "message-plain-paths",
+          author: "bot",
+          body: `Guardei tudo em ${folder} e uma cópia em ${sharedFile}. Veja também \`${folder}\`.`,
+          time: "10:00",
+        }}
+        bots={bots}
+        onSelectAgent={vi.fn()}
+        onOpenLink={vi.fn()}
+        onPreview={vi.fn()}
+        onAttachmentAction={vi.fn()}
+        onOpenSharedFile={onOpenSharedFile}
+        onOpenWorkspaceFile={onOpenWorkspaceFile}
+      />
+    ));
+
+    const [plainFolder] = screen.getAllByRole("button", { name: folder });
+    if (!plainFolder) throw new Error("The plain-text folder path is not a control.");
+    await fireEvent.click(plainFolder);
+    expect(onOpenWorkspaceFile).toHaveBeenCalledWith(folder);
+    await fireEvent.click(screen.getByRole("button", { name: "Open the file notas.txt that was shared" }));
+    expect(onOpenSharedFile).toHaveBeenCalledWith(sharedFile);
+    expect(screen.getAllByRole("button", { name: /relatorios/u }).length).toBeGreaterThanOrEqual(2);
+  });
+
   it("repairs escaped Markdown delimiters around Windows file links", async () => {
     const onOpenSharedFile = vi.fn();
     const onOpenWorkspaceFile = vi.fn();
@@ -507,7 +539,9 @@ describe("MessageBody", () => {
     }
     expect(onOpenSharedFile.mock.calls).toEqual(names.map((name) => [`${directory}${name}`]));
     expect(onOpenWorkspaceFile).not.toHaveBeenCalled();
-    expect(screen.getByText(directory).tagName).toBe("CODE");
+    // The folder itself is a control too: it opens as a listing in the side panel.
+    await fireEvent.click(screen.getByRole("button", { name: "Open the file Shared that was shared" }));
+    expect(onOpenSharedFile).toHaveBeenLastCalledWith(directory);
   });
 
   it("turns standalone file-like code mentions into workspace preview references", async () => {
