@@ -4,6 +4,28 @@ All notable changes to Luna Bot are recorded here.
 
 ## [Unreleased]
 
+## [0.2.1] - 2026-11-15
+
+### Added
+
+- Agent replies appear as cards with the agent's avatar, name and time.
+- Folders and absolute paths written in a message are links. A file opens in the side panel where the browser sits, and
+  a folder opens a list you can move through, with a button to go up.
+- Backstage in a room shows one conversation per member in two columns, with Markdown, keyboard navigation and a
+  single-column layout in narrow windows.
+
+### Changed
+
+- Claude conversations compact on their own near 200k tokens (you can change the window in the settings), and the app now
+  reads the real token usage of each model call.
+
+### Fixed
+
+- The chat keeps following the latest message while a reply streams, and stops when you scroll away.
+- A collapsed sidebar can be expanded again.
+- A very long result passed between agents no longer leaves the receiving agent stuck, and an unanswered question, a slow
+  model switch or a slow provider start no longer block the queue forever.
+
 ## [0.2.0] - 2026-11-15
 
 ### Added
