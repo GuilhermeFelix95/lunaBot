@@ -1,5 +1,7 @@
 import { fireEvent, render } from "@solidjs/testing-library";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { avatarProfile } from "../avatar";
+import { mascotAt } from "../mascots";
 import { setThemePreference } from "../theme";
 import { AgentAvatar } from "./AgentAvatar";
 
@@ -30,17 +32,19 @@ describe("AgentAvatar", () => {
       })),
     );
 
-    const view = render(() => (
-      <AgentAvatar seed="chief" hue={215} motion="working" shape={{ kind: "name", name: "cercle" }} />
-    ));
+    const view = render(() => <AgentAvatar seed="chief" hue={215} motion="working" />);
 
     expect(view.container.querySelector("svg")?.getAttribute("data-state")).toBe("rest");
   });
 
-  it("follows the active theme's avatar family", () => {
-    setThemePreference("papel");
-    const view = render(() => <AgentAvatar seed="chief" hue={215} motion="always" />);
+  it("draws the mascot its seed picks, in every theme", () => {
+    const expected = mascotAt(avatarProfile("chief", 215).mascot).id;
+    for (const theme of ["papel", "eclipse"] as const) {
+      setThemePreference(theme);
+      const view = render(() => <AgentAvatar seed="chief" hue={215} motion="always" />);
 
-    expect(view.container.querySelector("svg")?.getAttribute("data-family")).toBe("monolito");
+      expect(view.container.querySelector("svg")?.getAttribute("data-mascot")).toBe(expected);
+      view.unmount();
+    }
   });
 });

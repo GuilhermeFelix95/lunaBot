@@ -6,13 +6,9 @@ import {
   type AvatarPose,
   type AvatarState,
   avatarAnimationPhase,
-  avatarFamilyFor,
   avatarProfile,
-  avatarShapeIndex,
-  type SilhouetteChoice,
 } from "../avatar";
 import type { BotProfile } from "../data";
-import { activeTheme } from "../theme";
 
 interface AgentAvatarProps {
   bot?: Pick<BotProfile, "avatarSeed" | "avatarHue" | "avatarUrl">;
@@ -23,7 +19,6 @@ interface AgentAvatarProps {
   cycleOffset?: number;
   animationOffset?: number;
   animationState?: AvatarState;
-  shape?: SilhouetteChoice;
   class?: string;
   style?: Record<string, string>;
 }
@@ -52,7 +47,6 @@ export function AgentAvatar(props: AgentAvatarProps) {
           cycleOffset={props.cycleOffset}
           animationOffset={props.animationOffset}
           animationState={props.animationState}
-          shape={props.shape}
           class={className()}
           style={props.style}
         />
@@ -72,7 +66,6 @@ function GeneratedAvatar(props: {
   cycleOffset?: number;
   animationOffset?: number;
   animationState?: AvatarState;
-  shape?: SilhouetteChoice;
   class: string;
   style?: Record<string, string>;
 }) {
@@ -80,8 +73,6 @@ function GeneratedAvatar(props: {
   const [interacting, setInteracting] = createSignal(false);
   const [reducedMotion, setReducedMotion] = createSignal(prefersReducedMotion());
   const profile = createMemo(() => avatarProfile(props.seed, props.hue));
-  const family = () => avatarFamilyFor(activeTheme());
-  const silhouette = () => avatarShapeIndex(family(), props.shape, profile().shape);
   const animated = () =>
     !reducedMotion() && (props.animationState !== undefined || props.motion !== "hover" || interacting());
   const pose = (): AvatarPose => (animated() ? (props.animationState ?? motionState(props.motion)) : "rest");
@@ -123,9 +114,7 @@ function GeneratedAvatar(props: {
       aria-hidden="true"
     >
       <AvatarArt
-        family={family()}
-        shape={silhouette()}
-        expression={profile().expression}
+        mascot={profile().mascot}
         color={profile().color}
         pose={pose()}
         phase={avatarAnimationPhase(props.animationOffset, props.cycleOffset)}
