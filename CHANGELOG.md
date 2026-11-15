@@ -4,12 +4,19 @@ All notable changes to Luna Bot are recorded here.
 
 ## [Unreleased]
 
+## [0.2.3] - 2026-11-15
+
 ### Changed
 
 - New agent mascots. Thirty of them replace the old shapes: objects such as an envelope, a magnifying glass and a book,
   creatures, robots and symbols such as a heart or a lightning bolt. Each has its own face and, while its agent works,
   its own small movement. Agents keep their colour and get a new mascot from their seed; the picker in the agent settings
   still offers a new set of twelve and a colour.
+
+### Fixed
+
+- After an update the app opens as Luna Bot, not as a blank Electron window. Development runs now use their own name, so
+  their notification shortcut can no longer replace the installed app's Start menu shortcut.
 
 ## [0.2.2] - 2026-11-15
 
