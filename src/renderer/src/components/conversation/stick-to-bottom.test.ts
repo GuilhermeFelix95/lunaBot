@@ -35,6 +35,15 @@ describe("stick to bottom state", () => {
     expect(stick.isPinned()).toBe(true);
   });
 
+  it("keeps following when the viewport moves up and the height reads the same, as after a layout that grew and shrank within one frame", () => {
+    const stick = new StickToBottom();
+    stick.observeScroll(at(1_000), 0);
+
+    stick.observeScroll(at(900), 10);
+
+    expect(stick.isPinned()).toBe(true);
+  });
+
   it("stops following after an explicit release and ignores growth while released", () => {
     const stick = new StickToBottom();
     stick.observeScroll(at(1_000), 0);
@@ -60,6 +69,7 @@ describe("stick to bottom state", () => {
   it("ignores a programmatic scroll until its window ends", () => {
     const stick = new StickToBottom();
     stick.observeScroll(at(1_000), 0);
+    stick.setScrollbarDragging(true);
     stick.expectProgrammaticScroll(100, { durationMs: 1_000 });
 
     stick.observeScroll(at(800), 200);
@@ -72,6 +82,7 @@ describe("stick to bottom state", () => {
   it("closes a programmatic window when its target is reached", () => {
     const stick = new StickToBottom();
     stick.observeScroll(at(1_200), 0);
+    stick.setScrollbarDragging(true);
     stick.expectProgrammaticScroll(0, { target: 1_000 });
 
     stick.observeScroll(at(1_000), 50);
@@ -111,6 +122,7 @@ describe("stick to bottom state", () => {
     stick.release();
     stick.observeScroll(at(900), 10);
     stick.pin();
+    stick.setScrollbarDragging(true);
     stick.observeScroll(at(800), 20);
 
     expect(states).toEqual([false, true, false]);
