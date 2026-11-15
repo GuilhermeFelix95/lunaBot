@@ -71,6 +71,7 @@ import { ScrollToLatestButton, scrollToLatestMessage } from "./conversation/Mess
 import { MessageActions, MessageBody } from "./conversation/MessageRendering";
 import { loadMessagePins, messagePinsFor, setMessagePin } from "./conversation/message-pins";
 import { MessageSelectionActions } from "./conversation/SelectionActions";
+import { attachStickToBottom, StickToBottom, type StickToBottomAttachment } from "./conversation/stick-to-bottom";
 import {
   scrollToUnreadBoundary,
   UnreadMessagesBanner,
@@ -185,10 +186,6 @@ function agentActivityShowDelay(): number {
 
 function agentActivityExitDelay(): number {
   return rendererDuration("--lunabot-agent-activity-exit-delay", 500);
-}
-
-function followConversationBottom(element: HTMLDivElement): void {
-  element.scrollTop = element.scrollHeight;
 }
 
 interface ConversationTarget {
@@ -813,7 +810,9 @@ function createConversationViewScope(props: ConversationProps) {
   let chatSearchTimer: ReturnType<typeof setTimeout> | undefined;
   let chatSearchRequest = 0;
   let lastChatSearchQuery = "";
-  let stickToLatest = true;
+  const stickToBottom = new StickToBottom();
+  let stickAttachment: StickToBottomAttachment | undefined;
+  onCleanup(() => stickAttachment?.dispose());
   let lastConversationIdentity: string | undefined;
   let lastPanelBotId: string | undefined;
   let lastHandledSettingsRequestNonce: number | undefined;
@@ -826,11 +825,13 @@ function createConversationViewScope(props: ConversationProps) {
     getItemKey: (index) => props.messages[index]?.id ?? index,
     keyVersion: () => `${props.messages[0]?.id ?? ""}:${props.messages.at(-1)?.id ?? ""}`,
     scrollMargin: virtualScrollMargin,
+    isPinned: () => stickToBottom.isPinned(),
     onChange: (instance) => {
       const first = instance.getVirtualItems()[0];
       if (first && first.index <= 5 && props.hasOlder && !props.loadingOlder) props.onLoadOlder?.();
     },
   });
+  stickToBottom.onPinnedChange(() => messageVirtualizer.syncFollowMode());
   function openChatSearch(): void {
     if (!chatSearchOpen() && document.activeElement instanceof HTMLElement) {
       chatSearchReturnFocus = document.activeElement;
@@ -1294,7 +1295,6 @@ function createConversationViewScope(props: ConversationProps) {
     window.addEventListener("pointerdown", closeMessageMenus);
     scrollResizeObserver = new ResizeObserver(() => {
       updateVirtualScrollMargin();
-      if (scrollElement && stickToLatest) followConversationBottom(scrollElement);
       updateScrollFade();
       updateUnreadDividerVisibility();
     });
@@ -1304,7 +1304,7 @@ function createConversationViewScope(props: ConversationProps) {
     requestAnimationFrame(() => {
       if (!scrollElement) return;
       updateVirtualScrollMargin();
-      if (stickToLatest) scrollElement.scrollTop = scrollElement.scrollHeight;
+      stickAttachment?.followIfPinned();
       updateScrollFade(scrollElement);
       updateUnreadDividerVisibility();
     });
@@ -1405,7 +1405,7 @@ function createConversationViewScope(props: ConversationProps) {
         );
         if (!target) return;
         lastHandledMessageFocusNonce = request.nonce;
-        stickToLatest = false;
+        stickToBottom.release();
         target.scrollIntoView({ behavior: "auto", block: "center", inline: "nearest" });
       });
     },
@@ -1423,7 +1423,7 @@ function createConversationViewScope(props: ConversationProps) {
       renderChatSearchHighlights(matches, renderedIndex);
       const match = matches[renderedIndex];
       if (!match) return;
-      stickToLatest = false;
+      stickToBottom.release();
       match.message.scrollIntoView({
         behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth",
         block: "center",
@@ -1461,26 +1461,22 @@ function createConversationViewScope(props: ConversationProps) {
       if (conversationIdentity !== lastConversationIdentity) {
         if (lastConversationIdentity !== undefined) closeChatSearch(false);
         lastConversationIdentity = conversationIdentity;
-        stickToLatest = true;
+        stickToBottom.pin();
         setAgentActivitySpaceReserved(false);
       }
       if (latestScrollFrame !== undefined) cancelAnimationFrame(latestScrollFrame);
       if (latestScrollSettleFrame !== undefined) cancelAnimationFrame(latestScrollSettleFrame);
-      const followLatest = stickToLatest;
       latestScrollFrame = requestAnimationFrame(() => {
         latestScrollFrame = undefined;
         if (!scrollElement) return;
         updateVirtualScrollMargin();
-        if (followLatest && stickToLatest) followConversationBottom(scrollElement);
+        stickAttachment?.followIfPinned();
         updateScrollFade(scrollElement);
         updateUnreadDividerVisibility();
         latestScrollSettleFrame = requestAnimationFrame(() => {
           latestScrollSettleFrame = undefined;
           if (!scrollElement) return;
-          if (followLatest && stickToLatest) {
-            stickToLatest = true;
-            followConversationBottom(scrollElement);
-          }
+          stickAttachment?.followIfPinned();
           updateScrollFade(scrollElement);
           updateUnreadDividerVisibility();
         });
@@ -1853,7 +1849,8 @@ function createConversationViewScope(props: ConversationProps) {
     const text = expandComposerMentions(draft.text);
     const attachments = draft.attachments;
     if (!botId || !target || submitting() || (!text.trim() && attachments.length === 0)) return false;
-    stickToLatest = true;
+    stickToBottom.pin();
+    stickAttachment?.followIfPinned();
     setSubmitting(true);
     setComposerError(null);
     const sent = await props.onSendMessage(
@@ -1862,6 +1859,7 @@ function createConversationViewScope(props: ConversationProps) {
       draft.replyToMessageId,
       target,
     );
+    stickAttachment?.followIfPinned();
     setSubmitting(false);
     if (sent) {
       clearConversationError(target);
@@ -1941,7 +1939,7 @@ function createConversationViewScope(props: ConversationProps) {
     if (!unreadMessagesDivider) return;
     const divider = unreadMessagesDivider;
     const firstUnreadMessage = divider.nextElementSibling instanceof HTMLElement ? divider.nextElementSibling : divider;
-    stickToLatest = false;
+    stickToBottom.release();
     scrollToUnreadBoundary(scrollElement, firstUnreadMessage);
     await markUnreadMessages();
     requestAnimationFrame(() => {
@@ -1955,12 +1953,16 @@ function createConversationViewScope(props: ConversationProps) {
 
   async function jumpToLatestMessage(): Promise<void> {
     if (!scrollElement) return;
-    stickToLatest = true;
+    stickToBottom.pin();
     if (props.discontinuous) {
       await props.onLoadLatest?.();
       await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
     }
-    scrollToLatestMessage(scrollElement);
+    stickToBottom.expectProgrammaticScroll(performance.now(), {
+      target: Math.max(0, scrollElement.scrollHeight - scrollElement.clientHeight),
+    });
+    if (messageVirtualizer.isVirtualized()) messageVirtualizer.scrollToEnd();
+    else scrollToLatestMessage(scrollElement);
   }
 
   function replyToMessage(message: BotMessage) {
@@ -2294,15 +2296,19 @@ function createConversationViewScope(props: ConversationProps) {
   };
   const setScrollElement = (element: HTMLDivElement) => {
     scrollElement = element;
+    stickAttachment?.dispose();
+    stickAttachment = attachStickToBottom(element, stickToBottom, {
+      scrollToEnd: () => messageVirtualizer.scrollToEnd(),
+    });
+    if (virtualRoot) stickAttachment.observe(virtualRoot);
+    if (agentActivitySlot) stickAttachment.observe(agentActivitySlot);
     updateVirtualScrollMargin();
-  };
-  const setStickToLatest = (value: boolean) => {
-    stickToLatest = value;
   };
   const setVirtualRootElement = (element: HTMLDivElement) => {
     virtualRoot = element;
     updateVirtualScrollMargin();
     scrollResizeObserver?.observe(element);
+    stickAttachment?.observe(element);
   };
   const setUnreadMessagesDividerElement = (element: HTMLDivElement) => {
     unreadMessagesDivider = element;
@@ -2310,6 +2316,7 @@ function createConversationViewScope(props: ConversationProps) {
   const setAgentActivitySlotElement = (element: HTMLDivElement) => {
     agentActivitySlot = element;
     scrollResizeObserver?.observe(element);
+    stickAttachment?.observe(element);
   };
   const setBrowserSurfaceElement = (element: HTMLDivElement) => {
     browserSurface = element;
@@ -2330,7 +2337,6 @@ function createConversationViewScope(props: ConversationProps) {
     setContextAttachmentPickerElement,
     setImageAttachmentPickerElement,
     setScrollElement,
-    setStickToLatest,
     setUnreadMessagesDividerElement,
     setVirtualRootElement,
     activeActivityId,
@@ -2524,7 +2530,6 @@ function createConversationViewScope(props: ConversationProps) {
     showScrollToLatest,
     startVoiceElapsedTimer,
     startVoiceRecording,
-    stickToLatest,
     stopVoiceElapsedTimer,
     stopVoiceRecording,
     stopVoiceStream,
@@ -2745,7 +2750,6 @@ export function ConversationTimeline() {
     setAgentActivitySlotElement,
     setChatSearchInputElement,
     setScrollElement,
-    setStickToLatest,
     setUnreadMessagesDividerElement,
     setVirtualRootElement,
   } = useConversationViewScope();
@@ -2797,7 +2801,6 @@ export function ConversationTimeline() {
         ref={setScrollElement}
         onScroll={(event) => {
           const element = event.currentTarget;
-          setStickToLatest(element.scrollHeight - element.scrollTop - element.clientHeight <= 80);
           updateScrollFade(element);
           updateUnreadDividerVisibility();
         }}

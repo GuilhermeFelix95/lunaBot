@@ -14,6 +14,8 @@ interface ChatVirtualizerOptions<TScrollElement extends Element, TItemElement ex
   getItemKey: (index: number) => string | number;
   keyVersion: () => unknown;
   scrollMargin: () => number;
+  /** A pinned list follows appended rows; a released one stays where the reader is. */
+  isPinned: () => boolean;
   onChange?: (virtualizer: Virtualizer<TScrollElement, TItemElement>) => void;
 }
 
@@ -23,9 +25,17 @@ export interface ChatVirtualizer<TItemElement extends Element> {
   isVirtualized: () => boolean;
   measureElement: (element: TItemElement | null) => void;
   scrollMargin: () => number;
+  /** Instant jump to the last message: exact on virtualized lists, plain scrollTop when static. */
+  scrollToEnd: () => void;
+  /** Re-applies the follow mode for the current pinned state; call it right when that state changes. */
+  syncFollowMode: () => void;
 }
 
 const STATIC_CHAT_LIMIT = 100;
+
+function followModeFor(pinned: boolean): { followOnAppend: "auto" | false; scrollEndThreshold: number } {
+  return pinned ? { followOnAppend: "auto", scrollEndThreshold: 80 } : { followOnAppend: false, scrollEndThreshold: 2 };
+}
 
 export function createChatVirtualizer<TScrollElement extends Element, TItemElement extends Element>(
   options: ChatVirtualizerOptions<TScrollElement, TItemElement>,
@@ -46,8 +56,7 @@ export function createChatVirtualizer<TScrollElement extends Element, TItemEleme
     scrollToFn: elementScroll,
     overscan: 5,
     anchorTo: "end",
-    followOnAppend: "auto",
-    scrollEndThreshold: 80,
+    ...followModeFor(options.isPinned()),
     initialRect: { width: 1, height: 600 },
   });
   let refreshQueued = false;
@@ -107,6 +116,7 @@ export function createChatVirtualizer<TScrollElement extends Element, TItemEleme
         estimateSize: options.estimateSize,
         getItemKey: options.getItemKey,
         scrollMargin,
+        ...followModeFor(options.isPinned()),
         onChange: (instance) => {
           scheduleRefresh();
           untrack(() => options.onChange?.(instance));
@@ -141,6 +151,17 @@ export function createChatVirtualizer<TScrollElement extends Element, TItemEleme
       });
     },
     scrollMargin: options.scrollMargin,
+    scrollToEnd: () => {
+      if (options.count() > STATIC_CHAT_LIMIT) {
+        virtualizer.scrollToEnd({ behavior: "auto" });
+        return;
+      }
+      const element = options.getScrollElement();
+      if (element) element.scrollTop = element.scrollHeight;
+    },
+    syncFollowMode: () => {
+      virtualizer.setOptions({ ...virtualizer.options, ...followModeFor(options.isPinned()) });
+    },
   };
 }
 
