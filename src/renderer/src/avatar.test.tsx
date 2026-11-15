@@ -419,3 +419,22 @@ function arcPoints(
   }
   return points;
 }
+
+describe("Avatar masks", () => {
+  it("links every body to its own mask, so each face keeps its eyes and mouth", () => {
+    const view = render(() => (
+      <>
+        <AvatarArt family="fases" shape={0} expression={0} color={0} pose="rest" />
+        <AvatarArt family="fases" shape={1} expression={1} color={1} pose="rest" />
+      </>
+    ));
+    const svgs = Array.from(view.container.querySelectorAll("svg.avatar-svg"));
+    const maskIds = svgs.map((svg) => svg.querySelector("mask")?.id);
+    expect(new Set(maskIds).size).toBe(2);
+    for (const svg of svgs) {
+      const mask = svg.querySelector("mask");
+      expect(svg.querySelector("path.avatar-body")?.getAttribute("mask")).toBe(`url(#${mask?.id})`);
+    }
+    view.unmount();
+  });
+});

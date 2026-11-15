@@ -1,6 +1,6 @@
 import type { BotAvatarHue } from "@lunabot/contracts/ipc";
 import { render } from "@solidjs/web";
-import { For, flush, Show } from "solid-js";
+import { createUniqueId, For, flush, Show } from "solid-js";
 import { activeTheme, type ResolvedTheme } from "./theme";
 
 export type AvatarMotion = "hover" | "always" | "idle" | "working" | "connecting";
@@ -288,8 +288,6 @@ function mountStaticAvatar(host: HTMLElement, seed: string, hue: BotAvatarHue | 
   return dispose;
 }
 
-let maskSequence = 0;
-
 export function AvatarArt(props: {
   family: AvatarFamily;
   shape: number;
@@ -298,8 +296,8 @@ export function AvatarArt(props: {
   pose: AvatarPose;
   phase?: number;
 }) {
-  maskSequence += 1;
-  const maskId = `avatar-mask-${maskSequence}`;
+  // createUniqueId is a call, so the production compiler cannot freeze it into the template as a constant.
+  const maskId = `avatar-mask-${createUniqueId()}`;
   const geometry = () => avatarFaceGeometry(props.family, props.shape, props.expression);
   const silhouette = () => geometry().silhouette;
 

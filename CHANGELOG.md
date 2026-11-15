@@ -4,6 +4,19 @@ All notable changes to Luna Bot are recorded here.
 
 ## [Unreleased]
 
+## [0.1.2] - 2026-11-14
+
+### Fixed
+
+- Bot faces show their eyes and mouth again in the installed app. A build step had given every avatar mask the same
+  id, so the cut-outs were ignored.
+
+## [0.1.1] - 2026-11-14
+
+### Fixed
+
+- The menu bar is hidden on Windows and Linux. Keyboard shortcuts keep working.
+
 ## [0.1.0] - 2026-11-14
 
 First public release. Luna Bot is a development preview.
