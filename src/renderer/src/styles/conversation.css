@@ -8069,3 +8069,42 @@ button.chat-action-target:active,
 .voice-button-active:active {
   transform: scale(0.97);
 }
+
+/* Agent replies are cards: a head with the avatar, name and time, then the message. */
+.message-entry-card .ui-bubble {
+  width: min(720px, calc(100% - var(--message-actions-inline-size) - 5px));
+}
+
+.message-entry-card .ui-bubble-content {
+  width: 100%;
+  border: 1px solid var(--lunabot-border);
+  border-radius: var(--lunabot-radius-xl);
+  background: var(--lunabot-bg-surface);
+  padding: 12px 16px 14px;
+}
+
+.message-card-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+  font-size: var(--lunabot-text-md, 13px);
+  line-height: 1.2;
+}
+
+.message-card-avatar {
+  width: 22px;
+  height: 22px;
+  flex: none;
+}
+
+.message-card-name {
+  font-weight: 600;
+  color: var(--lunabot-text-primary);
+}
+
+.message-card-time {
+  margin-left: auto;
+  color: var(--lunabot-text-muted);
+  font-size: var(--lunabot-text-sm);
+}

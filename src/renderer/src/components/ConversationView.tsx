@@ -114,8 +114,21 @@ const QuestionPromptBubble = lazy(() =>
   import("./QuestionPromptBubble").then((module) => ({ default: module.QuestionPromptBubble })),
 );
 
+/** An agent reply with text is drawn as a card with the agent's name and time on top. */
+function isAgentCardMessage(message: BotMessage): boolean {
+  return (
+    message.author === "bot" &&
+    !message.imageGeneration &&
+    !message.questionPrompt &&
+    !message.actionMarker &&
+    !message.isError &&
+    message.body.trim() !== ""
+  );
+}
+
 function conversationBubbleVariant(message: BotMessage): BubbleVariant {
   if (message.author === "you") return "secondary";
+  if (isAgentCardMessage(message)) return "muted";
   if (message.imageGeneration || (!message.body.trim() && message.attachments?.length)) return "ghost";
   return messageContentBlocks(message.body, message.streaming === true).some((block) => block.type !== "text")
     ? "ghost"
@@ -2965,6 +2978,7 @@ export function ConversationTimeline() {
                                     "message-entry-animated": animateEntrance,
                                     "message-entry-user": message()?.author === "you",
                                     "message-entry-bot": message()?.author === "bot",
+                                    "message-entry-card": isAgentCardMessage(message() ?? initialMessage),
                                   },
                                 ]}
                               >
@@ -2977,6 +2991,20 @@ export function ConversationTimeline() {
                                       data-streaming={message()?.streaming === true ? "" : undefined}
                                     >
                                       <BubbleContent>
+                                        <Show when={isAgentCardMessage(message() ?? initialMessage)}>
+                                          {(() => {
+                                            const author =
+                                              props.bots.find((candidate) => candidate.id === message()?.senderBotId) ??
+                                              props.bot;
+                                            return (
+                                              <div class="message-card-head">
+                                                <AgentAvatar class="message-card-avatar" bot={author} />
+                                                <strong class="message-card-name">{author?.name}</strong>
+                                                <time class="message-card-time">{message()?.time}</time>
+                                              </div>
+                                            );
+                                          })()}
+                                        </Show>
                                         <MessageBody
                                           message={message() ?? initialMessage}
                                           referencedMessage={
