@@ -98,6 +98,7 @@ export const roomsEn = {
   "rooms.backstage.showLess": "Show less",
   "rooms.backstage.back": "Back",
   "rooms.backstage.attachments": "Attachments",
+  "rooms.requests.pending": "Requests waiting for you ({count})",
   "rooms.request.hireTitle": "Hire “{name}” for {room}",
   "rooms.request.hireNote":
     "The room gets an isolated copy, without the original bot's memory or files. Nothing that happens in the room goes back to it.",

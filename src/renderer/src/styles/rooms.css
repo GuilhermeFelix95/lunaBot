@@ -601,15 +601,13 @@
 }
 
 /* The conversation owns its scroller, which follows the newest message. Request cards stay above it. */
-.rooms-view-conversation > :not(.rooms-request-list) {
+.rooms-view-conversation > :not(.rooms-requests) {
   flex: 1 1 auto;
   min-height: 0;
 }
 
-.rooms-view-conversation > .rooms-request-list {
+.rooms-view-conversation > .rooms-requests {
   flex: 0 0 auto;
-  max-height: 40%;
-  overflow-y: auto;
 }
 
 .rooms-view-notice {
@@ -622,40 +620,75 @@
   line-height: var(--lunabot-leading-sm);
 }
 
-/* Rooms: manager requests. */
+/* Rooms: manager requests. A slim tray; each request is one row, and a long list scrolls inside the tray. */
+
+.rooms-requests {
+  display: flex;
+  flex-direction: column;
+  margin: 0 var(--lunabot-space-3);
+  border: 1px solid var(--lunabot-line);
+  border-radius: var(--lunabot-radius-md);
+  background: var(--lunabot-surface-raised);
+  overflow: hidden;
+}
+
+.rooms-requests-toggle {
+  display: flex;
+  align-items: center;
+  gap: var(--lunabot-space-1);
+  padding: var(--lunabot-space-1-5) var(--lunabot-space-3);
+  border: 0;
+  background: transparent;
+  color: var(--lunabot-ink-2);
+  font: inherit;
+  font-size: var(--lunabot-text-sm);
+  font-weight: var(--lunabot-weight-medium);
+  text-align: left;
+  cursor: pointer;
+}
+
+.rooms-requests-toggle:hover {
+  background: var(--lunabot-surface-sunken);
+}
+
+.rooms-requests-toggle:focus-visible {
+  outline: 2px solid var(--lunabot-accent);
+  outline-offset: -2px;
+}
 
 .rooms-request-list {
   display: flex;
   flex-direction: column;
-  gap: var(--lunabot-space-3);
+  max-height: 148px;
+  overflow-y: auto;
+  border-top: 1px solid var(--lunabot-line);
 }
 
 .rooms-request {
   display: flex;
-  flex-direction: column;
-  gap: var(--lunabot-space-2);
-  padding: var(--lunabot-space-4);
-  border: 1px solid var(--lunabot-line);
-  border-radius: var(--lunabot-radius-md);
-  background: var(--lunabot-surface-raised);
+  align-items: center;
+  gap: var(--lunabot-space-3);
+  padding: var(--lunabot-space-1-5) var(--lunabot-space-3);
+}
+
+.rooms-request + .rooms-request {
+  border-top: 1px solid var(--lunabot-line);
 }
 
 .rooms-request-title {
+  flex: 1 1 auto;
+  min-width: 0;
   margin: 0;
-  font-size: var(--lunabot-text-md);
-  font-weight: var(--lunabot-weight-medium);
-}
-
-.rooms-request-note {
-  margin: 0;
-  color: var(--lunabot-ink-2);
+  overflow: hidden;
   font-size: var(--lunabot-text-sm);
-  line-height: var(--lunabot-leading-sm);
+  font-weight: var(--lunabot-weight-medium);
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .rooms-request-actions {
   display: flex;
-  flex-wrap: wrap;
+  flex: 0 0 auto;
   gap: var(--lunabot-space-2);
 }
 

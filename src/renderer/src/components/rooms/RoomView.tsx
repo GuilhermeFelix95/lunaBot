@@ -2,7 +2,7 @@ import type { Room, RoomRequest } from "@lunabot/contracts/ipc";
 import type { JSX } from "@solidjs/web";
 import { createEffect, createSignal, For, Show } from "solid-js";
 import { t } from "../../i18n";
-import { Archive, DropdownMenu, Ellipsis, Tabs } from "../ui";
+import { Archive, ChevronDown, ChevronRight, DropdownMenu, Ellipsis, Tabs } from "../ui";
 import { RoomBackstage } from "./RoomBackstage";
 import { RoomArchiveDialog } from "./RoomDialogs";
 import { RoomRequestCard } from "./RoomRequestCard";
@@ -75,6 +75,7 @@ interface RoomContentProps {
 function RoomContent(props: RoomContentProps) {
   const store = props.store;
   const [archiveOpen, setArchiveOpen] = createSignal(false);
+  const [requestsOpen, setRequestsOpen] = createSignal(true);
   const [busy, setBusy] = createSignal(false);
 
   const memberName = (botId: string) => props.room().members.find((member) => member.botId === botId)?.name;
@@ -164,21 +165,36 @@ function RoomContent(props: RoomContentProps) {
         </Tabs.List>
         <Tabs.Content value="conversation" class="rooms-view-panel rooms-view-conversation">
           <Show when={pendingRoomRequests(props.room()).length > 0}>
-            <div class="rooms-request-list">
-              <For each={pendingRoomRequests(props.room())}>
-                {(request) => (
-                  <RoomRequestCard
-                    request={request}
-                    roomName={props.room().name}
-                    targetName={targetName(request)}
-                    disabled={busy() || isArchived() || props.creatingRequestId === request.id}
-                    onCreateBot={() => props.onCreateBotForRequest(request)}
-                    onApprove={() => void answer(request, "approve")}
-                    onReject={() => void answer(request, "reject")}
-                  />
-                )}
-              </For>
-            </div>
+            <section class="rooms-requests">
+              <button
+                type="button"
+                class="rooms-requests-toggle"
+                aria-expanded={requestsOpen() ? "true" : "false"}
+                onClick={() => setRequestsOpen(!requestsOpen())}
+              >
+                <Show when={requestsOpen()} fallback={<ChevronRight class="size-4" aria-hidden="true" />}>
+                  <ChevronDown class="size-4" aria-hidden="true" />
+                </Show>
+                <span>{t("rooms.requests.pending", { count: pendingRoomRequests(props.room()).length })}</span>
+              </button>
+              <Show when={requestsOpen()}>
+                <div class="rooms-request-list">
+                  <For each={pendingRoomRequests(props.room())}>
+                    {(request) => (
+                      <RoomRequestCard
+                        request={request}
+                        roomName={props.room().name}
+                        targetName={targetName(request)}
+                        disabled={busy() || isArchived() || props.creatingRequestId === request.id}
+                        onCreateBot={() => props.onCreateBotForRequest(request)}
+                        onApprove={() => void answer(request, "approve")}
+                        onReject={() => void answer(request, "reject")}
+                      />
+                    )}
+                  </For>
+                </div>
+              </Show>
+            </section>
           </Show>
           {props.renderConversation()}
         </Tabs.Content>

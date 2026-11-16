@@ -99,6 +99,7 @@ export const roomsPtBR = {
   "rooms.backstage.showLess": "Mostrar menos",
   "rooms.backstage.back": "Voltar",
   "rooms.backstage.attachments": "Anexos",
+  "rooms.requests.pending": "Pedidos aguardando você ({count})",
   "rooms.request.hireTitle": "Contratar “{name}” para {room}",
   "rooms.request.hireNote":
     "A sala recebe uma cópia isolada, sem memória nem arquivos do bot original. Nada do que acontecer na sala volta para ele.",

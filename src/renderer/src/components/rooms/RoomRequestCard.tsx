@@ -14,61 +14,55 @@ export interface RoomRequestCardProps {
   onReject: () => void;
 }
 
+// One request is one line: what the manager asks for, then the two answers. The longer explanation is the tooltip.
 export function RoomRequestCard(props: RoomRequestCardProps) {
   const titleId = `rooms-request-${props.request.id}`;
-
-  if (props.request.kind === "new_bot") {
-    return (
-      <article class="rooms-request rooms-request-new-bot" aria-labelledby={titleId}>
-        <h3 id={titleId} class="rooms-request-title">
-          {t("rooms.request.newBotTitle", { name: props.request.profile?.name ?? "" })}
-        </h3>
-        <p class="rooms-request-note">{props.request.profile?.description ?? props.request.reason}</p>
-        <div class="rooms-request-actions">
-          <Button variant="outline" disabled={props.disabled} onClick={() => props.onCreateBot()}>
-            {t("rooms.request.createBot")}
-          </Button>
-          <Button variant="outline" disabled={props.disabled} onClick={() => props.onReject()}>
-            {t("rooms.request.notNow")}
-          </Button>
-        </div>
-      </article>
-    );
-  }
-
-  if (props.request.kind === "hire") {
-    return (
-      <article class="rooms-request rooms-request-hire" aria-labelledby={titleId}>
-        <h3 id={titleId} class="rooms-request-title">
-          {t("rooms.request.hireTitle", { name: props.targetName, room: props.roomName })}
-        </h3>
-        <p class="rooms-request-note">{t("rooms.request.hireNote")}</p>
-        <div class="rooms-request-actions">
-          <Button disabled={props.disabled} onClick={() => props.onApprove()}>
-            {t("rooms.request.hire")}
-          </Button>
-          <Button variant="outline" disabled={props.disabled} onClick={() => props.onReject()}>
-            {t("rooms.request.notNow")}
-          </Button>
-        </div>
-      </article>
-    );
-  }
-
-  return (
-    <article class="rooms-request rooms-request-dismiss" aria-labelledby={titleId}>
+  const row = (
+    title: string,
+    note: string,
+    primary: { label: string; destructive?: boolean; onClick: () => void },
+    secondary: string,
+  ) => (
+    <article class="rooms-request" aria-labelledby={titleId} title={note}>
       <h3 id={titleId} class="rooms-request-title">
-        {t("rooms.request.dismissTitle", { name: props.targetName, room: props.roomName })}
+        {title}
       </h3>
-      <p class="rooms-request-note">{t("rooms.request.dismissNote")}</p>
       <div class="rooms-request-actions">
-        <Button variant="destructive" disabled={props.disabled} onClick={() => props.onApprove()}>
-          {t("rooms.request.dismiss")}
+        <Button
+          size="sm"
+          variant={primary.destructive ? "destructive" : "default"}
+          disabled={props.disabled}
+          onClick={() => primary.onClick()}
+        >
+          {primary.label}
         </Button>
-        <Button variant="outline" disabled={props.disabled} onClick={() => props.onReject()}>
-          {t("rooms.request.keep")}
+        <Button size="sm" variant="outline" disabled={props.disabled} onClick={() => props.onReject()}>
+          {secondary}
         </Button>
       </div>
     </article>
+  );
+
+  if (props.request.kind === "new_bot") {
+    return row(
+      t("rooms.request.newBotTitle", { name: props.request.profile?.name ?? "" }),
+      props.request.profile?.description || props.request.reason,
+      { label: t("rooms.request.createBot"), onClick: () => props.onCreateBot() },
+      t("rooms.request.notNow"),
+    );
+  }
+  if (props.request.kind === "hire") {
+    return row(
+      t("rooms.request.hireTitle", { name: props.targetName, room: props.roomName }),
+      t("rooms.request.hireNote"),
+      { label: t("rooms.request.hire"), onClick: () => props.onApprove() },
+      t("rooms.request.notNow"),
+    );
+  }
+  return row(
+    t("rooms.request.dismissTitle", { name: props.targetName, room: props.roomName }),
+    t("rooms.request.dismissNote"),
+    { label: t("rooms.request.dismiss"), destructive: true, onClick: () => props.onApprove() },
+    t("rooms.request.keep"),
   );
 }

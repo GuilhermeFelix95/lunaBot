@@ -8,6 +8,10 @@ All notable changes to Luna Bot are recorded here.
 
 - Bots in a room show a name and a role, such as Guilherme - Manager, in the sidebar and in the backstage. The new room dialog asks for the manager's name, and every bot in a room has an Edit name and role item in its menu. Renaming a hired bot never changes the original.
 
+### Changed
+
+- The manager's requests in a room (hire, dismiss, create a bot) take one line each inside a slim tray that you can fold, instead of large cards that filled the screen. The explanation of each request is its tooltip.
+
 ### Fixed
 
 - The app no longer slows down or freezes while bots work through a queue of messages. Every change in the queue used to rewrite the whole message history in the database; now only the rows that changed are written. With 1,000 messages a write dropped from about 29 ms to about 2 ms, and creating a room while a bot had ten messages queued dropped from 655 ms to about 40 ms.
