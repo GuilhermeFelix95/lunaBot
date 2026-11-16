@@ -4,6 +4,8 @@ All notable changes to Luna Bot are recorded here.
 
 ## [Unreleased]
 
+## [0.2.5] - 2026-11-16
+
 ### Added
 
 - Room managers can see the other active rooms and message the managers of those rooms to ask for work, such as a banner from a content room. Only managers talk across rooms; members still reach only their own room.
