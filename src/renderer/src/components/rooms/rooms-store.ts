@@ -147,8 +147,12 @@ export function createRoomsStore(
     for (const room of list) {
       if (!(room.id in backstageByRoom())) void refreshBackstage(room.id);
     }
-    const current = selectedRoomId();
-    if (current) void refreshProfiles(current);
+    // The sidebar draws every active room's bots, so their profiles are loaded for all of them.
+    for (const room of list) {
+      if (room.status === "active" && (!(room.id in profilesByRoom()) || room.id === selectedRoomId())) {
+        void refreshProfiles(room.id);
+      }
+    }
   }
 
   async function run<T>(failure: TranslationKey, action: () => Promise<T>): Promise<T | null> {

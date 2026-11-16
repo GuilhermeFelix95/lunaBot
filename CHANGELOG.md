@@ -4,6 +4,10 @@ All notable changes to Luna Bot are recorded here.
 
 ## [Unreleased]
 
+### Fixed
+
+- Bots in a room show the same mascot in the sidebar and the backstage as in the conversation, instead of a different one.
+
 ## [0.2.4] - 2026-11-16
 
 ### Changed

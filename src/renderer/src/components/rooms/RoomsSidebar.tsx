@@ -13,7 +13,7 @@ import {
   UserMinus,
 } from "../ui";
 import { RoomPurgeDialog } from "./RoomDialogs";
-import { activeRoomMembers, dismissedRoomMembers, roomManager } from "./room-model";
+import { activeRoomMembers, dismissedRoomMembers, roomBotAvatar, roomManager } from "./room-model";
 import type { RoomsStore } from "./rooms-store";
 
 const DISMISSED_GROUP_ID = "rooms:dismissed";
@@ -38,6 +38,7 @@ export function RoomsSidebar(props: RoomsSidebarProps) {
     activeRooms().flatMap((room) => dismissedRoomMembers(room).map((member) => ({ room, member })));
   const roomById = (roomId: string): Room | undefined => store.rooms().find((room) => room.id === roomId);
   const isCollapsed = (id: string) => store.collapsedIds().includes(id);
+  const avatarOf = (roomId: string, botId: string) => roomBotAvatar(store.profiles(roomId), botId);
 
   const dismissEntry = () => {
     const target = dismissTarget();
@@ -111,7 +112,7 @@ export function RoomsSidebar(props: RoomsSidebarProps) {
               {(entry) => (
                 <li>
                   <button type="button" class="rooms-sidebar-member" onClick={() => store.openRoom(room.id)}>
-                    <AgentAvatar seed={entry().botId} hue={null} class="rooms-sidebar-avatar" />
+                    <AgentAvatar {...avatarOf(room.id, entry().botId)} class="rooms-sidebar-avatar" />
                     <span class="rooms-sidebar-member-name">{entry().name}</span>
                     <span class="rooms-badge rooms-badge-manager">{t("rooms.badge.manager")}</span>
                   </button>
@@ -126,7 +127,12 @@ export function RoomsSidebar(props: RoomsSidebarProps) {
                     class="rooms-sidebar-member"
                     onClick={() => store.openRoom(room.id, { tab: "backstage", memberBotId: member.botId })}
                   >
-                    <AgentAvatar seed={member.botId} hue={null} class="rooms-sidebar-avatar" />
+                    <AgentAvatar
+                      seed={avatarOf(room.id, member.botId).seed}
+                      hue={avatarOf(room.id, member.botId).hue}
+                      url={avatarOf(room.id, member.botId).url}
+                      class="rooms-sidebar-avatar"
+                    />
                     <span class="rooms-sidebar-member-name">{member.name}</span>
                   </button>
                   <DropdownMenu.Root placement="bottom-end" gutter={6} modal={false}>
@@ -218,7 +224,12 @@ export function RoomsSidebar(props: RoomsSidebarProps) {
                   {(entry) => (
                     <li class="rooms-sidebar-member-row">
                       <div class="rooms-sidebar-member" title={entry.room.name}>
-                        <AgentAvatar seed={entry.member.botId} hue={null} class="rooms-sidebar-avatar" />
+                        <AgentAvatar
+                          seed={avatarOf(entry.room.id, entry.member.botId).seed}
+                          hue={avatarOf(entry.room.id, entry.member.botId).hue}
+                          url={avatarOf(entry.room.id, entry.member.botId).url}
+                          class="rooms-sidebar-avatar"
+                        />
                         <span class="rooms-sidebar-member-name">{entry.member.name}</span>
                         <span class="rooms-badge">{t("rooms.badge.dismissed")}</span>
                       </div>

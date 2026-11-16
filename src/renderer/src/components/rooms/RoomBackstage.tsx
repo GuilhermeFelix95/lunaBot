@@ -11,6 +11,7 @@ import {
   type BackstageConversationState,
   backstageConversations,
   type ResponseTime,
+  roomBotAvatar,
   selectedBackstageBotId,
 } from "./room-model";
 import type { RoomsStore } from "./rooms-store";
@@ -73,6 +74,7 @@ function replyLabel(time: ResponseTime): string {
 export function RoomBackstage(props: RoomBackstageProps) {
   const roomId = () => props.room().id;
   const bots = createMemo((): BotProfile[] => props.store.profiles(roomId()).map(toBotProfile));
+  const avatarOf = (botId: string) => roomBotAvatar(props.store.profiles(roomId()), botId);
   const conversations = createMemo(() =>
     backstageConversations(props.room(), props.store.backstage(roomId()), {
       seenAt: props.store.conversationSeen(roomId()),
@@ -237,7 +239,12 @@ export function RoomBackstage(props: RoomBackstageProps) {
                   onKeyDown={(event) => onOptionKeyDown(event, conversation.botId)}
                   onFocus={() => setFocusedBotId(conversation.botId)}
                 >
-                  <AgentAvatar seed={conversation.botId} hue={null} class="rooms-backstage-avatar" />
+                  <AgentAvatar
+                    seed={avatarOf(conversation.botId).seed}
+                    hue={avatarOf(conversation.botId).hue}
+                    url={avatarOf(conversation.botId).url}
+                    class="rooms-backstage-avatar"
+                  />
                   <span class="rooms-backstage-item-main">
                     <span class="rooms-backstage-item-top">
                       <strong class="rooms-backstage-name">{conversation.name}</strong>
@@ -285,8 +292,9 @@ export function RoomBackstage(props: RoomBackstageProps) {
                 <span>{t("rooms.backstage.back")}</span>
               </button>
               <AgentAvatar
-                seed={current().botId}
-                hue={null}
+                seed={avatarOf(current().botId).seed}
+                hue={avatarOf(current().botId).hue}
+                url={avatarOf(current().botId).url}
                 class="rooms-backstage-avatar rooms-backstage-detail-avatar"
               />
               <h2 class="rooms-backstage-title">{t("rooms.backstage.title", { name: current().name })}</h2>
