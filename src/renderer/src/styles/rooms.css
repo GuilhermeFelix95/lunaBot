@@ -1049,11 +1049,55 @@
   font-size: var(--lunabot-text-sm);
 }
 
+.managers-room-members {
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--lunabot-space-2);
+  margin-left: auto;
+}
+
+.managers-room-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--lunabot-space-2);
+  max-width: 200px;
+  padding: 2px var(--lunabot-space-3) 2px 2px;
+  border: 1px solid var(--lunabot-border);
+  border-radius: 999px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-size: var(--lunabot-text-sm);
+  cursor: pointer;
+}
+
+.managers-room-chip > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.managers-room-chip:hover,
+.managers-room-chip[aria-pressed="true"] {
+  border-color: var(--manager-color);
+  background: color-mix(in srgb, var(--manager-color) 14%, transparent);
+}
+
+.managers-room-chip-avatar {
+  flex-shrink: 0;
+  width: 22px;
+  height: 22px;
+}
+
 .managers-room-feed {
   display: flex;
   flex: 1 1 auto;
   flex-direction: column;
-  gap: var(--lunabot-space-4);
+  gap: var(--lunabot-space-2);
   min-height: 0;
   padding: var(--lunabot-space-4) var(--lunabot-space-5);
   overflow-y: auto;
@@ -1067,15 +1111,50 @@
   text-align: center;
 }
 
-.managers-room-message {
+.managers-room-round {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: var(--lunabot-space-1);
+  margin-top: var(--lunabot-space-4);
+}
+
+.managers-room-round-time {
+  color: var(--lunabot-ink-2);
+  font-size: var(--lunabot-text-xs);
+}
+
+.managers-room-me {
+  display: flex;
+  flex-direction: column;
+  gap: var(--lunabot-space-1);
+  max-width: min(78%, 560px);
+  padding: var(--lunabot-space-2) var(--lunabot-space-3);
+  border-radius: 12px 12px 2px 12px;
+  background: var(--lunabot-accent-soft, var(--lunabot-surface-sunken));
+}
+
+.managers-room-me-to {
+  color: var(--lunabot-ink-2);
+  font-size: var(--lunabot-text-xs);
+}
+
+.managers-room-card {
   display: flex;
   gap: var(--lunabot-space-3);
+  max-width: min(86%, 640px);
+  margin-left: var(--lunabot-space-2);
+  padding: var(--lunabot-space-2) var(--lunabot-space-3);
+  border: 1px solid var(--lunabot-border);
+  border-left: 3px solid var(--manager-color);
+  border-radius: var(--lunabot-radius-md);
+  background: var(--lunabot-surface-sunken);
 }
 
 .managers-room-avatar {
   flex-shrink: 0;
-  width: 32px;
-  height: 32px;
+  width: 28px;
+  height: 28px;
 }
 
 .managers-room-body {
@@ -1083,9 +1162,6 @@
   flex-direction: column;
   gap: var(--lunabot-space-1);
   min-width: 0;
-  padding: var(--lunabot-space-2) var(--lunabot-space-3);
-  border-radius: var(--lunabot-radius-md);
-  background: var(--lunabot-surface-sunken);
 }
 
 .managers-room-meta {
@@ -1096,12 +1172,10 @@
   font-size: var(--lunabot-text-sm);
 }
 
-.managers-room-to,
 .managers-room-time,
-.managers-room-files,
 .managers-room-hint {
   color: var(--lunabot-ink-2);
-  font-size: var(--lunabot-text-sm);
+  font-size: var(--lunabot-text-xs);
 }
 
 .managers-room-time {
@@ -1115,29 +1189,139 @@
   overflow-wrap: anywhere;
 }
 
-.managers-room-files {
+.managers-room-text[data-clamped] {
+  display: -webkit-box;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+}
+
+.managers-room-more {
+  align-self: flex-start;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--lunabot-accent, inherit);
+  font: inherit;
+  font-size: var(--lunabot-text-xs);
+  cursor: pointer;
+}
+
+.managers-room-link {
+  display: block;
+  align-self: center;
+  width: min(86%, 640px);
   margin: 0;
+  padding: var(--lunabot-space-1) var(--lunabot-space-3);
+  border: 1px dashed var(--lunabot-border);
+  border-radius: var(--lunabot-radius-md);
+  color: var(--lunabot-ink-2);
+  font-size: var(--lunabot-text-sm);
+}
+
+.managers-room-link-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--lunabot-space-2);
+}
+
+.managers-room-link-text {
+  display: block;
+  overflow-wrap: anywhere;
 }
 
 .managers-room-composer {
+  position: relative;
   display: flex;
-  align-items: flex-end;
-  gap: var(--lunabot-space-2);
-  padding: var(--lunabot-space-3) var(--lunabot-space-5) 0;
+  flex-direction: column;
+  gap: var(--lunabot-space-1);
+  padding: var(--lunabot-space-3) var(--lunabot-space-5) var(--lunabot-space-3);
+  border-top: 1px solid var(--lunabot-border);
 }
 
-.managers-room-input {
-  flex: 1 1 auto;
-  resize: none;
+.managers-room-menu {
+  position: absolute;
+  bottom: calc(100% - var(--lunabot-space-2));
+  left: var(--lunabot-space-5);
+  display: flex;
+  flex-direction: column;
+  width: min(320px, 80%);
+  padding: var(--lunabot-space-1);
+  border: 1px solid var(--lunabot-border);
+  border-radius: var(--lunabot-radius-md);
+  background: var(--lunabot-surface-raised, var(--lunabot-surface-sunken));
+}
+
+.managers-room-option {
+  display: flex;
+  align-items: center;
+  gap: var(--lunabot-space-2);
+  padding: var(--lunabot-space-1) var(--lunabot-space-2);
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-size: var(--lunabot-text-sm);
+  text-align: left;
+  cursor: pointer;
+}
+
+.managers-room-option[aria-selected="true"],
+.managers-room-option:hover {
+  background: var(--lunabot-hover);
+}
+
+.managers-room-box {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: var(--lunabot-space-1);
   padding: var(--lunabot-space-2) var(--lunabot-space-3);
   border: 1px solid var(--lunabot-border);
   border-radius: var(--lunabot-radius-md);
+}
+
+.managers-room-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--lunabot-space-1);
+  max-width: 100%;
+  padding: 1px var(--lunabot-space-2);
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--manager-color) 18%, transparent);
+  font-size: var(--lunabot-text-sm);
+}
+
+.managers-room-tag > button {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+
+.managers-room-input {
+  flex: 1 1 160px;
+  min-width: 120px;
+  resize: none;
+  padding: 0;
+  border: 0;
+  outline: 0;
   background: transparent;
   color: inherit;
   font: inherit;
 }
 
+.managers-room-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--lunabot-space-3);
+}
+
 .managers-room-hint {
   margin: 0;
-  padding: var(--lunabot-space-1) var(--lunabot-space-5) var(--lunabot-space-3);
 }
