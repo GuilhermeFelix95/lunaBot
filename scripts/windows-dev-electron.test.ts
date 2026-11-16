@@ -1,8 +1,13 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { devElectronMarker, resolveWindowsDevElectron, shouldRebuildDevElectron } from "./windows-dev-electron";
+import {
+  DEV_ELECTRON_PRODUCT_NAME,
+  devElectronMarker,
+  resolveWindowsDevElectron,
+  shouldRebuildDevElectron,
+} from "./windows-dev-electron";
 
 const temporaryRoots: string[] = [];
 
@@ -17,6 +22,15 @@ describe("Windows development Electron copy", () => {
     expect(devElectronMarker({ electronVersion: "44.0.0", iconSha256: "a" })).toBe(base);
     expect(devElectronMarker({ electronVersion: "45.0.0", iconSha256: "a" })).not.toBe(base);
     expect(devElectronMarker({ electronVersion: "44.0.0", iconSha256: "b" })).not.toBe(base);
+  });
+
+  it("names the copy differently from the installed app so notifications cannot overwrite its Start menu shortcut", () => {
+    const builderConfig = readFileSync(join(__dirname, "..", "electron-builder.yml"), "utf8");
+    const installedName = /^productName: (.+)$/mu.exec(builderConfig)?.[1]?.trim();
+
+    expect(installedName).toBe("Luna Bot");
+    expect(DEV_ELECTRON_PRODUCT_NAME).not.toBe(installedName);
+    expect(devElectronMarker({ electronVersion: "44.0.0", iconSha256: "a" })).toMatch(/^[0-9a-f]{64}$/u);
   });
 
   it("rebuilds only when the copy is missing or its marker differs", () => {
