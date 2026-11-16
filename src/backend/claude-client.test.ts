@@ -195,6 +195,12 @@ if (process.argv[2] === "auth") {
     ]);
   });
 
+  it("gives a Claude thread the browser takeover tool, so the user can log in for it", async () => {
+    const mcpServers = await startClaudeThread([{ type: "namespace", name: "lunabot_browser", tools: [] }]);
+
+    expect(registeredToolNames(mcpServers, "lunabot_browser")).toContain("request_takeover");
+  });
+
   it("keeps room tools out of Claude threads that do not list the room namespace", async () => {
     const mcpServers = await startClaudeThread([
       { type: "namespace", name: "lunabot_browser", tools: [] },

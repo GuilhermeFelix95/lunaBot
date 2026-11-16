@@ -758,6 +758,12 @@ export class ClaudeAgentClient extends EventEmitter<ClientEvents> {
           tool("screenshot", "Capture the visible browser page.", { tabId: z.string() }, (args) =>
             call("lunabot_browser", "screenshot", args),
           ),
+          tool(
+            "request_takeover",
+            "Pause and ask the user to take over the current browser tab for login, consent, CAPTCHA, passkey, two-factor authentication, or another authorization step. The call waits until the user finishes or cancels.",
+            { tabId: z.string() },
+            (args) => call("lunabot_browser", "request_takeover", args),
+          ),
           tool("close_tab", "Close a Luna Bot browser tab.", { tabId: z.string() }, (args) =>
             call("lunabot_browser", "close_tab", args),
           ),

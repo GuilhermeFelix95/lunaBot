@@ -119,6 +119,7 @@ export function AppView() {
     answerPrompt,
     presentPromptResolution,
     respondToApproval,
+    browserTakeoverBotId,
     respondToBrowserTakeover,
     cancelQueuedMessage,
     steerQueuedMessage,
@@ -147,8 +148,8 @@ export function AppView() {
   });
 
   const activeBrowserTakeover = createMemo(() => {
-    const bot = activeBot();
-    const event = bot ? pendingPrompts()[bot.id] : undefined;
+    const botId = browserTakeoverBotId();
+    const event = botId ? pendingPrompts()[botId] : undefined;
     return event?.type === "browser-takeover-requested" ? event.request : undefined;
   });
 

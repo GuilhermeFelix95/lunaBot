@@ -458,6 +458,16 @@ export function createAppController(props: AppProps = {}) {
     const stored = roomsStore.profiles(roomId).find((bot) => bot.id === managerId);
     return stored ? toBotProfile(stored) : undefined;
   });
+  // A room shows only the manager's conversation, but any active member can ask the user to take over the browser
+  // (for a login, say). That request has to reach the room's screen, so look at the whole room, not only the manager.
+  const browserTakeoverBotId = createMemo(() => {
+    const prompts = pendingPrompts();
+    const candidates = [activeBotId()];
+    const roomId = roomsStore.selectedRoomId();
+    const room = roomId ? roomsStore.rooms().find((item) => item.id === roomId) : undefined;
+    for (const member of room?.members ?? []) if (member.status === "active") candidates.push(member.botId);
+    return candidates.find((botId) => prompts[botId]?.type === "browser-takeover-requested");
+  });
   // The shared conversation loads and sends through activeBotId, so it follows the room's manager.
   createEffect(
     () => ({ managerId: selectedRoomManagerId(), currentId: activeBotId() }),
@@ -1875,15 +1885,15 @@ export function createAppController(props: AppProps = {}) {
   }
 
   async function respondToBrowserTakeover(decision: "complete" | "cancel"): Promise<boolean> {
-    const bot = activeBot();
-    const event = bot ? pendingPrompts()[bot.id] : undefined;
-    if (!bot || event?.type !== "browser-takeover-requested") return false;
+    const botId = browserTakeoverBotId();
+    const event = botId ? pendingPrompts()[botId] : undefined;
+    if (!botId || event?.type !== "browser-takeover-requested") return false;
     try {
       await window.lunabot.agent.respondToBrowserTakeover({ requestId: event.request.requestId, decision });
-      setPendingPrompts((current) => ({ ...current, [bot.id]: undefined }));
+      setPendingPrompts((current) => ({ ...current, [botId]: undefined }));
       return true;
     } catch (error) {
-      appendUiError(bot.id, error, t("misc.app.status.browserTakeoverFailed"));
+      appendUiError(botId, error, t("misc.app.status.browserTakeoverFailed"));
       return false;
     }
   }
@@ -2336,6 +2346,7 @@ export function createAppController(props: AppProps = {}) {
     answerPrompt,
     presentPromptResolution,
     respondToApproval,
+    browserTakeoverBotId,
     respondToBrowserTakeover,
     cancelQueuedMessage,
     steerQueuedMessage,
