@@ -895,6 +895,7 @@ export class LunaBotDatabase {
               WHERE thread_id = ? AND state = 'active' ORDER BY created_at DESC LIMIT 1
             ), 'running', ?, NULL, ?)
             ON CONFLICT(turn_id) DO UPDATE SET status = 'running', last_event_sequence = excluded.last_event_sequence
+            WHERE projection_turns.status = 'running'
           `).run(snapshot.activeTurnId, snapshot.threadId, snapshot.threadId, new Date().toISOString(), sequence);
         }
         if (
@@ -920,6 +921,14 @@ export class LunaBotDatabase {
       },
     );
     return { ...structuredClone(snapshot), revision: result.revision };
+  }
+
+  /** After a restart no provider turn is running, so any turn still marked running was cut off. Returns how many were closed. */
+  closeRunningTurns(): number {
+    const result = this.connection
+      .prepare("UPDATE projection_turns SET status = 'interrupted', completed_at = ? WHERE status = 'running'")
+      .run(new Date().toISOString());
+    return Number(result.changes);
   }
 
   appendConversationMessage(input: {
