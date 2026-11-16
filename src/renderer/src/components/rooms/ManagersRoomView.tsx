@@ -1,5 +1,6 @@
 import { MANAGERS_ROOM_ID } from "@lunabot/contracts/ipc";
 import { createEffect, createMemo, createSignal, For, flush, onSettled, Show } from "solid-js";
+import { z } from "zod";
 import { t } from "../../i18n";
 import { AgentAvatar } from "../AgentAvatar";
 import { Button, UsersRound } from "../ui";
@@ -20,7 +21,7 @@ function timeLabel(iso: string): string {
   return new Date(iso).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
 }
 
-// What the user said to the managers and what each one answered, kept only while this view is open.
+// What the user said to the managers and what each one answered, saved in this browser profile so it survives restarts.
 interface Talk {
   id: string;
   kind: "round" | "reply";
@@ -28,6 +29,34 @@ interface Talk {
   text: string;
   createdAt: string;
   to: string[];
+}
+
+const TALK_KEY = "lunabot.managersRoom.talk";
+const TALK_LIMIT = 200;
+
+const talkSchema = z.object({
+  id: z.string(),
+  kind: z.enum(["round", "reply"]),
+  botId: z.string().nullable(),
+  text: z.string(),
+  createdAt: z.string(),
+  to: z.array(z.string()),
+});
+
+function loadTalk(): Talk[] {
+  try {
+    return z.array(talkSchema).parse(JSON.parse(window.localStorage.getItem(TALK_KEY) ?? "[]"));
+  } catch {
+    return [];
+  }
+}
+
+function saveTalk(items: Talk[]) {
+  try {
+    window.localStorage.setItem(TALK_KEY, JSON.stringify(items.slice(-TALK_LIMIT)));
+  } catch {
+    // Storage may be unavailable; the history then lasts only while the app is open.
+  }
 }
 
 type Entry =
@@ -42,7 +71,8 @@ export function ManagersRoomView(props: ManagersRoomViewProps) {
   const [menuDismissed, setMenuDismissed] = createSignal(false);
   const [expanded, setExpanded] = createSignal<string[]>([]);
   const [sending, setSending] = createSignal(false);
-  const [talk, setTalk] = createSignal<Talk[]>([]);
+  const [talk, setTalk] = createSignal<Talk[]>(loadTalk());
+  createEffect(talk, saveTalk);
   const seenReplies = new Set<string>();
   let sentAt = 0;
   let feed: HTMLDivElement | undefined;
