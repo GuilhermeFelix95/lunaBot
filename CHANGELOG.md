@@ -4,6 +4,10 @@ All notable changes to Luna Bot are recorded here.
 
 ## [Unreleased]
 
+### Changed
+
+- Bots are never still any more. Their faces blink, glance around and pull faces all the time, not only when you point at them, and each bot is at a different point of the loop so a list of bots does not move in unison. Reduced motion in the system settings still keeps them still.
+
 ### Fixed
 
 - A bot in a room can now ask you to log in. Claude bots had no way to hand the browser over to you, so they stopped at the login page and could only ask you to do it yourself. The request now appears in the room, even when the bot that sent it is a member and not the manager.
