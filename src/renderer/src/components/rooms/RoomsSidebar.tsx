@@ -161,6 +161,27 @@ export function RoomsSidebar(props: RoomsSidebarProps) {
   function renderCompactRooms() {
     return (
       <ul class="rooms-sidebar-compact">
+        <Show when={store.managersRoom()}>
+          {(managers) => (
+            <li>
+              <button
+                type="button"
+                class="rooms-sidebar-compact-room"
+                aria-current={store.selectedRoomId() === managers().id ? "page" : undefined}
+                aria-label={managers().name}
+                title={managers().name}
+                onClick={() => store.openRoom(managers().id, { tab: "backstage" })}
+              >
+                <span class="rooms-sidebar-mark" aria-hidden="true">
+                  {managers().name.trim().charAt(0).toUpperCase()}
+                </span>
+                <Show when={store.hasActivity(managers().id)}>
+                  <span class="rooms-activity-dot" role="img" aria-label={t("rooms.activity.label")} />
+                </Show>
+              </button>
+            </li>
+          )}
+        </Show>
         <For each={activeRooms()}>
           {(room) => (
             <li>
@@ -201,6 +222,26 @@ export function RoomsSidebar(props: RoomsSidebarProps) {
         </Show>
         <Show when={activeRooms().length > 0} fallback={<p class="rooms-sidebar-empty">{t("rooms.sidebar.empty")}</p>}>
           <ul class="rooms-sidebar-list">
+            <Show when={store.managersRoom()}>
+              {(managers) => (
+                <li>
+                  <button
+                    type="button"
+                    class="rooms-sidebar-room-open"
+                    aria-current={store.selectedRoomId() === managers().id ? "page" : undefined}
+                    onClick={() => store.openRoom(managers().id, { tab: "backstage" })}
+                  >
+                    <span class="rooms-sidebar-mark" aria-hidden="true">
+                      {managers().name.trim().charAt(0).toUpperCase()}
+                    </span>
+                    <span class="rooms-sidebar-room-name">{managers().name}</span>
+                    <Show when={store.hasActivity(managers().id)}>
+                      <span class="rooms-activity-dot" role="img" aria-label={t("rooms.activity.label")} />
+                    </Show>
+                  </button>
+                </li>
+              )}
+            </Show>
             <For each={activeRooms()}>{(room) => renderRoom(room)}</For>
           </ul>
         </Show>

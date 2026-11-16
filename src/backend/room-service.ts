@@ -11,6 +11,7 @@ import {
   type AgentReasoningEffort,
   type BotSummary,
   type CreateRoomInput,
+  MANAGERS_ROOM_ID,
   ROOM_ACTIVE_BOT_LIMIT,
   ROOM_NAME_MAX_LENGTH,
   type Room,
@@ -76,6 +77,10 @@ export class RoomService extends EventEmitter {
 
   // Profiles of the manager and active members, for the room conversation. Not a general listing.
   botProfiles(roomId: string): BotSummary[] {
+    if (roomId === MANAGERS_ROOM_ID) {
+      const managerIds = new Set(this.#activeManagerNames().keys());
+      return this.#store.list().filter((bot) => managerIds.has(bot.id));
+    }
     const [row] = databaseRows(this.#connection().prepare("SELECT * FROM rooms WHERE room_id = ?").all(roomId));
     // A room deleted forever has no members left, so a late request for its profiles gets an empty list.
     if (!row) return [];
@@ -88,12 +93,34 @@ export class RoomService extends EventEmitter {
 
   // Read-only backstage: only messages whose author and recipients are all active members of this room.
   backstage(roomId: string): RoomBackstageMessage[] {
+    if (roomId === MANAGERS_ROOM_ID) return this.#managersFeed();
     const room = this.#requireRoom(roomId);
     const activeIds = new Set(
       room.members.filter((member) => member.status === "active").map((member) => member.botId),
     );
     const names = new Map(room.members.map((member) => [member.botId, member.name]));
     return this.#agents.roomMessages(activeIds).map((message) => ({
+      ...message,
+      authorName: names.get(message.authorBotId) ?? message.authorBotId,
+    }));
+  }
+
+  // The managers room is virtual: messages whose author and recipients are all active managers, which can only be managers of different rooms.
+  #activeManagerNames(): Map<string, string> {
+    const names = new Map<string, string>();
+    for (const room of this.listRooms()) {
+      if (room.status !== "active") continue;
+      for (const member of room.members) {
+        if (member.role === "manager" && member.status === "active")
+          names.set(member.botId, `${member.name} (${room.name})`);
+      }
+    }
+    return names;
+  }
+
+  #managersFeed(): RoomBackstageMessage[] {
+    const names = this.#activeManagerNames();
+    return this.#agents.roomMessages(new Set(names.keys())).map((message) => ({
       ...message,
       authorName: names.get(message.authorBotId) ?? message.authorBotId,
     }));

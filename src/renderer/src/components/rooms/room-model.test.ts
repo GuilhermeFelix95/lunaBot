@@ -1,11 +1,12 @@
 import type { Room, RoomBackstageMessage, RoomMember } from "@lunabot/contracts/ipc";
-import { ROOM_ACTIVE_BOT_LIMIT, ROOM_NAME_MAX_LENGTH } from "@lunabot/contracts/ipc";
+import { MANAGERS_ROOM_ID, ROOM_ACTIVE_BOT_LIMIT, ROOM_NAME_MAX_LENGTH } from "@lunabot/contracts/ipc";
 import { describe, expect, it } from "vitest";
 import {
   activeRoomMembers,
   type BackstageConversation,
   backstageConversations,
   backstageForMember,
+  buildManagersRoom,
   canPurgeRoom,
   canSelectRoomBot,
   dismissedRoomMembers,
@@ -322,5 +323,27 @@ describe("roomIdOfBot", () => {
     expect(roomIdOfBot(rooms, "reviewer")).toBe("room-1");
     expect(roomIdOfBot(rooms, "other-manager")).toBe("room-2");
     expect(roomIdOfBot(rooms, "general-marketing")).toBeNull();
+  });
+});
+
+describe("buildManagersRoom", () => {
+  const other: Room = {
+    ...room,
+    id: "room-2",
+    name: "Content",
+    members: [member("lead", "manager"), member("designer", "member")],
+    requests: [],
+  };
+
+  it("lists only the active managers of active rooms, named after their room", () => {
+    const managers = buildManagersRoom([room, other], "Managers");
+
+    expect(managers?.id).toBe(MANAGERS_ROOM_ID);
+    expect(managers?.members.map((item) => item.name)).toEqual(["manager (Launch plan)", "lead (Content)"]);
+  });
+
+  it("does not exist until two rooms are active", () => {
+    expect(buildManagersRoom([room], "Managers")).toBeNull();
+    expect(buildManagersRoom([room, { ...other, status: "archived" }], "Managers")).toBeNull();
   });
 });

@@ -6,7 +6,7 @@ import type {
   RoomMember,
   RoomRequest,
 } from "@lunabot/contracts/ipc";
-import { ROOM_ACTIVE_BOT_LIMIT, ROOM_NAME_MAX_LENGTH } from "@lunabot/contracts/ipc";
+import { MANAGERS_ROOM_ID, ROOM_ACTIVE_BOT_LIMIT, ROOM_NAME_MAX_LENGTH } from "@lunabot/contracts/ipc";
 
 export type RoomNameError = "required" | "tooLong";
 
@@ -188,6 +188,35 @@ export function selectedBackstageBotId(
 
 // A room needs attention when a request is waiting or when backstage has messages newer than the last visit.
 // seenAt is null when the backstage was never opened, so any existing message counts as new.
+// The managers room is virtual: it exists once two rooms are active, and its members are those rooms' managers.
+export function buildManagersRoom(rooms: readonly Room[], name: string): Room | null {
+  const active = rooms.filter((room) => room.status === "active");
+  if (active.length < 2) return null;
+  const members: RoomMember[] = [];
+  for (const room of active) {
+    for (const member of room.members) {
+      if (member.role === "manager" && member.status === "active") {
+        members.push({ ...member, name: `${member.name} (${room.name})` });
+      }
+    }
+  }
+  const createdAt = active.reduce(
+    (first, room) => (room.createdAt < first ? room.createdAt : first),
+    active[0]?.createdAt ?? "",
+  );
+  return {
+    id: MANAGERS_ROOM_ID,
+    name,
+    status: "active",
+    browserMode: "shared",
+    createdAt,
+    updatedAt: createdAt,
+    archivedAt: null,
+    members,
+    requests: [],
+  };
+}
+
 export function hasRoomActivity(
   room: Room,
   backstage: readonly RoomBackstageMessage[],
