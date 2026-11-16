@@ -24,6 +24,7 @@ export const miscPtBR: Partial<Record<keyof typeof miscEn, string>> = {
   "misc.app.botCreateFailed": "Não foi possível criar o Bot.",
   "misc.app.messageUnavailable": "Essa mensagem não pode mais ser encontrada.",
   "misc.app.duplicateFailed": "Duplicar o agente não funcionou",
+  "misc.app.devBadge": "Versão de desenvolvimento",
   "misc.app.exportFailed": "Exportar o agente não funcionou",
   "misc.app.importFailed": "Importar o agente não funcionou",
   "misc.app.providerDownloadsUnavailable": "Os downloads do provedor não estão disponíveis.",
