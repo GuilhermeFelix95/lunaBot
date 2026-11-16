@@ -106,7 +106,7 @@ describe("Sidebar pinned chats", () => {
     render(() => <Sidebar {...props} />);
 
     expect(screen.getByRole("region", { name: "Pinned chats" })).toBeInTheDocument();
-    expect(screen.queryByText("Pinned")).not.toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Pinned" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Chief, pinned agent" })).toHaveAttribute("aria-pressed", "true");
     expect(screen.getByTitle("Chief of staff")).toHaveTextContent("Chief of staff");
     expect(screen.getAllByText("Chief")).toHaveLength(1);

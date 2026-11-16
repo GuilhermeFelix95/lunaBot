@@ -19,6 +19,7 @@ export const sidebarEn = {
   "sidebar.empty.noAgents": "No agents yet",
   "sidebar.empty.allHidden": "All agents are hidden",
   "sidebar.empty.noChats": "No chats yet",
+  "sidebar.pinned.heading": "Pinned",
   "sidebar.pinned.label": "Pinned chats",
   "sidebar.pinned.dropHint": "Drop to pin it",
   "sidebar.pinned.limit.one": "Maximum {count} pinned chat",
