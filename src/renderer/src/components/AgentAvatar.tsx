@@ -7,6 +7,7 @@ import {
   type AvatarState,
   avatarAnimationPhase,
   avatarProfile,
+  avatarSeedPhase,
 } from "../avatar";
 import type { BotProfile } from "../data";
 
@@ -26,7 +27,7 @@ interface AgentAvatarProps {
 export function AgentAvatar(props: AgentAvatarProps) {
   const seed = () => props.seed ?? props.bot?.avatarSeed ?? "agent";
   const hue = () => (props.hue !== undefined ? props.hue : (props.bot?.avatarHue ?? null));
-  const motion = () => props.motion ?? "hover";
+  const motion = () => props.motion ?? "idle";
   const url = () => (props.url !== undefined ? props.url : (props.bot?.avatarUrl ?? null));
   const [imageFailed, setImageFailed] = createSignal(false);
   createEffect(
@@ -69,45 +70,21 @@ function GeneratedAvatar(props: {
   class: string;
   style?: Record<string, string>;
 }) {
-  let element: HTMLSpanElement | undefined;
-  const [interacting, setInteracting] = createSignal(false);
   const [reducedMotion, setReducedMotion] = createSignal(prefersReducedMotion());
   const profile = createMemo(() => avatarProfile(props.seed, props.hue));
-  const animated = () =>
-    !reducedMotion() && (props.animationState !== undefined || props.motion !== "hover" || interacting());
-  const pose = (): AvatarPose => (animated() ? (props.animationState ?? motionState(props.motion)) : "rest");
+  // A mascot is never still: it only rests when the system asks for reduced motion.
+  const pose = (): AvatarPose => (reducedMotion() ? "rest" : (props.animationState ?? motionState(props.motion)));
 
   onSettled(() => {
     const media = window.matchMedia?.("(prefers-reduced-motion: reduce)");
     const syncReducedMotion = () => setReducedMotion(media?.matches ?? false);
     syncReducedMotion();
     media?.addEventListener?.("change", syncReducedMotion);
-
-    const interactionTarget = element?.closest<HTMLElement>("button, a, [role='button'], [tabindex]") ?? element;
-    const startInteraction = () => setInteracting(true);
-    const stopInteraction = () => setInteracting(false);
-    const stopFocusInteraction = (event: FocusEvent) => {
-      if (!(event.relatedTarget instanceof Node) || !interactionTarget?.contains(event.relatedTarget)) {
-        stopInteraction();
-      }
-    };
-    interactionTarget?.addEventListener("pointerenter", startInteraction);
-    interactionTarget?.addEventListener("pointerleave", stopInteraction);
-    interactionTarget?.addEventListener("focusin", startInteraction);
-    interactionTarget?.addEventListener("focusout", stopFocusInteraction);
-
-    return () => {
-      media?.removeEventListener?.("change", syncReducedMotion);
-      interactionTarget?.removeEventListener("pointerenter", startInteraction);
-      interactionTarget?.removeEventListener("pointerleave", stopInteraction);
-      interactionTarget?.removeEventListener("focusin", startInteraction);
-      interactionTarget?.removeEventListener("focusout", stopFocusInteraction);
-    };
+    return () => media?.removeEventListener?.("change", syncReducedMotion);
   });
 
   return (
     <span
-      ref={element}
       class={`${props.class} bot-avatar-art`}
       style={props.style}
       data-animation-state={props.animationState}
@@ -117,7 +94,7 @@ function GeneratedAvatar(props: {
         mascot={profile().mascot}
         color={profile().color}
         pose={pose()}
-        phase={avatarAnimationPhase(props.animationOffset, props.cycleOffset)}
+        phase={avatarSeedPhase(props.seed) + avatarAnimationPhase(props.animationOffset, props.cycleOffset)}
       />
     </span>
   );

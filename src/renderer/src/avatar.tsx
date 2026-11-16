@@ -92,6 +92,11 @@ export function avatarAnimationPhase(animationOffset: number | undefined, cycleO
   return -((animationOffset ?? 0) + (cycleOffset ?? 0) * CYCLE_OFFSET_SECONDS);
 }
 
+/** Where in its 4 second cycle a bot starts, so a row of bots does not blink and grimace in unison. */
+export function avatarSeedPhase(seed: string): number {
+  return -(stableIndex(`${seed}:phase`, 40) / 10);
+}
+
 export function createStaticAvatarSvg(seed: string, hue: BotAvatarHue | null): SVGSVGElement {
   const host = document.createElement("span");
   const dispose = mountStaticAvatar(host, seed, hue);
