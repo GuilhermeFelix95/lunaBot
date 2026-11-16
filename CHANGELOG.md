@@ -4,6 +4,8 @@ All notable changes to Luna Bot are recorded here.
 
 ## [Unreleased]
 
+## [0.2.7] - 2026-11-16
+
 ### Changed
 
 - Bots are never still any more. Their faces blink, glance around and pull faces all the time, not only when you point at them, and each bot is at a different point of the loop so a list of bots does not move in unison. Reduced motion in the system settings still keeps them still.
