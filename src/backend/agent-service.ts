@@ -3591,6 +3591,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       const persisted = this.#store.database.persistConversation(snapshot, "turn.interrupted-by-restart", { turnId });
       this.#snapshots.set(bot.id, persisted);
     }
+    this.#store.database.closeRunningTurns();
   }
 
   #backgroundTasksFromNotification(params: unknown): AgentBackgroundTask[] {
