@@ -352,8 +352,10 @@ export function AppView() {
       <Show when={!botSetupOpen() && roomsStore.selectedRoomId() === MANAGERS_ROOM_ID}>
         <ManagersRoomView
           store={roomsStore}
-          onSend={async (text) => {
-            const managers = roomsStore.managersRoom()?.members ?? [];
+          onSend={async (text, botIds) => {
+            const managers = (roomsStore.managersRoom()?.members ?? []).filter((member) =>
+              botIds.includes(member.botId),
+            );
             await Promise.all(
               managers.map((member) =>
                 window.lunabot.agent.sendMessage({ botId: member.botId, text, attachmentDraftIds: [] }),

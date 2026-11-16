@@ -75,7 +75,7 @@ describe("ManagersRoomView", () => {
       flush();
       expect(store.loaded()).toBe(true);
     });
-    const onSend = vi.fn(async () => {});
+    const onSend = vi.fn(async (_text: string, _botIds: string[]) => {});
     render(() => <ManagersRoomView store={store} onSend={onSend} />);
 
     const input = await screen.findByRole("textbox", { name: "Talk to all managers" });
@@ -87,7 +87,7 @@ describe("ManagersRoomView", () => {
       flush();
       expect(screen.getByText("hello team")).toBeInTheDocument();
     });
-    expect(onSend).toHaveBeenCalledWith("hello team");
+    expect(onSend).toHaveBeenCalledWith("hello team", ["m1", "m2"]);
     expect(input).toHaveValue("");
 
     emit({
@@ -111,6 +111,34 @@ describe("ManagersRoomView", () => {
     await waitFor(() => {
       flush();
       expect(screen.getByText("Got it, Ana here")).toBeInTheDocument();
+    });
+  });
+  it("sends only to the manager marked with @", async () => {
+    Object.defineProperty(window, "lunabot", {
+      configurable: true,
+      value: { agent: { onEvent: () => () => {} } },
+    });
+    const store = createRoomsStore(createApi());
+    store.start();
+    await waitFor(() => {
+      flush();
+      expect(store.loaded()).toBe(true);
+    });
+    const onSend = vi.fn(async (_text: string, _botIds: string[]) => {});
+    render(() => <ManagersRoomView store={store} onSend={onSend} />);
+
+    const input = await screen.findByRole("textbox", { name: "Talk to all managers" });
+    fireEvent.input(input, { target: { value: "@Beto" } });
+    flush();
+    fireEvent.click(await screen.findByRole("option", { name: /Beto/ }));
+    flush();
+    fireEvent.input(input, { target: { value: "status?" } });
+    flush();
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+
+    await waitFor(() => {
+      flush();
+      expect(onSend).toHaveBeenCalledWith("status?", ["m2"]);
     });
   });
 });
