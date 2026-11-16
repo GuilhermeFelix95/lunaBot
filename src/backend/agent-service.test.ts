@@ -4400,6 +4400,10 @@ describe.sequential("AgentService", () => {
     await waitFor(() => service?.listQueue("chief").deliveries[0]?.status === "interrupted");
     await service.sendMessage({ botId: "chief", text: "New live turn" });
     await waitFor(() => service?.listQueue("chief").deliveries[1]?.status === "running");
+    // The first streamed text arrives after the turn starts, so wait for it instead of racing it.
+    await waitFor(async () =>
+      (await service?.readConversation("chief"))?.messages.some((message) => message.text === "Streaming"),
+    );
 
     const snapshot = await service.readConversation("chief");
     expect(snapshot.activeTurnId).toBe(service.listQueue("chief").deliveries[1]?.turnId);
