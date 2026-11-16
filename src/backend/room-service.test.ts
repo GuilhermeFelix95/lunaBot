@@ -3,7 +3,12 @@
 import { mkdtemp, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { AgentModelOption, BrowserControlState, BrowserTab } from "@lunabot/contracts/ipc";
+import {
+  type AgentModelOption,
+  type BrowserControlState,
+  type BrowserTab,
+  MANAGERS_ROOM_ID,
+} from "@lunabot/contracts/ipc";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { removeDirectory } from "../test-utils/fs";
 import { AgentService } from "./agent-service";
@@ -613,6 +618,39 @@ describe("RoomService", () => {
     await rooms.deleteRoomForever(room.id);
 
     expect(clear).toHaveBeenCalledWith(room.id);
+  });
+
+  it("shows the managers room feed only for messages between managers of different rooms", async () => {
+    const { agents, mailbox, rooms } = await setup();
+    const helper = await agents.createBotProfile(SOURCE);
+    const dev = await rooms.createRoom({ name: "Dev", manager: MANAGER });
+    const content = await rooms.createRoom({
+      name: "Content",
+      manager: { ...MANAGER, name: "Content Lead", avatarSeed: "setup:content-lead" },
+    });
+    const devManager = dev.members.find((member) => member.role === "manager")?.botId ?? "";
+    const contentManager = content.members.find((member) => member.role === "manager")?.botId ?? "";
+    const copyId = await rooms.copyBotIntoRoom(content.id, helper.id);
+    await mailbox.enqueue({
+      sender: { kind: "bot", botId: devManager },
+      recipientBotIds: [contentManager],
+      text: "Need a banner",
+    });
+    await mailbox.enqueue({
+      sender: { kind: "bot", botId: contentManager },
+      recipientBotIds: [copyId],
+      text: "Inside",
+    });
+    await mailbox.enqueue({ sender: { kind: "user" }, recipientBotIds: [devManager], text: "From the user" });
+
+    const feed = rooms.backstage(MANAGERS_ROOM_ID);
+
+    expect(feed.map((message) => message.text)).toEqual(["Need a banner"]);
+    expect(feed[0]).toMatchObject({
+      authorBotId: devManager,
+      authorName: `${MANAGER.name} (Dev)`,
+      recipientBotIds: [contentManager],
+    });
   });
 
   it("shows the backstage only for messages between active members of the room", async () => {

@@ -14,6 +14,7 @@ import {
   type ExternalDestination,
   type FilePreview,
   IPC_CHANNELS,
+  MANAGERS_ROOM_ID,
   type MacPermissionId,
   type SidebarLayoutSnapshot,
   type VoiceModelStatus,
@@ -1317,8 +1318,10 @@ if (!hasSingleInstanceLock) {
       service.on("event", (event) => {
         forwardAgentEvent(event);
         if (event.type !== "queue-changed") return;
-        const roomId = store.database.roomMemberships().get(event.snapshot.botId)?.roomId;
-        if (roomId) forwardRoomBackstageChanged(roomId);
+        const membership = store.database.roomMemberships().get(event.snapshot.botId);
+        if (!membership) return;
+        forwardRoomBackstageChanged(membership.roomId);
+        if (membership.role === "manager") forwardRoomBackstageChanged(MANAGERS_ROOM_ID);
       });
       const rooms = new RoomService(store, service);
       rooms.on("changed", () => forwardRoomsChanged(rooms));

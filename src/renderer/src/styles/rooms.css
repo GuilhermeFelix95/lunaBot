@@ -962,3 +962,22 @@
     display: inline-flex;
   }
 }
+
+.managers-room-composer {
+  display: flex;
+  align-items: flex-end;
+  gap: var(--lunabot-space-2);
+  padding: var(--lunabot-space-3);
+  border-top: 1px solid var(--lunabot-border);
+}
+
+.managers-room-input {
+  flex: 1 1 auto;
+  resize: none;
+  padding: var(--lunabot-space-2);
+  border: 1px solid var(--lunabot-border);
+  border-radius: var(--lunabot-radius-md);
+  background: transparent;
+  color: inherit;
+  font: inherit;
+}

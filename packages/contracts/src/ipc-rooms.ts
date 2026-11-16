@@ -3,6 +3,8 @@ import { isDynamicRecord, isOneOf, isString } from "./runtime-values";
 
 export const ROOM_NAME_MAX_LENGTH = 60;
 export const ROOM_ACTIVE_BOT_LIMIT = 8;
+// Stands in for a room id where the app asks for the managers room: the feed of messages between managers of different rooms. It is not a stored room.
+export const MANAGERS_ROOM_ID = "managers";
 
 export type RoomStatus = "active" | "archived";
 export type RoomBrowserMode = "exclusive" | "shared";

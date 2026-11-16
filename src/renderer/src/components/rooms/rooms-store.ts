@@ -1,8 +1,14 @@
-import type { BotSummary, Room, RoomBackstageMessage, RoomsDesktopApi } from "@lunabot/contracts/ipc";
+import {
+  type BotSummary,
+  MANAGERS_ROOM_ID,
+  type Room,
+  type RoomBackstageMessage,
+  type RoomsDesktopApi,
+} from "@lunabot/contracts/ipc";
 import { createSignal } from "solid-js";
 import { z } from "zod";
-import type { TranslationKey } from "../../i18n";
-import { hasRoomActivity } from "./room-model";
+import { type TranslationKey, t } from "../../i18n";
+import { buildManagersRoom, hasRoomActivity } from "./room-model";
 
 export const ROOM_SECTIONS_COLLAPSED_STORAGE_KEY = "lunabot:room-sections-collapsed:v1";
 export const ROOM_BACKSTAGE_SEEN_STORAGE_KEY = "lunabot:room-backstage-seen:v1";
@@ -82,6 +88,8 @@ export function writeRoomConversationSeen(
 
 export interface RoomsStore {
   rooms: () => Room[];
+  /** The virtual managers room, or null while fewer than two rooms are active. */
+  managersRoom: () => Room | null;
   loaded: () => boolean;
   /** Translation key of the last failed action, or null. */
   error: () => TranslationKey | null;
@@ -142,7 +150,14 @@ export function createRoomsStore(
   function applyList(list: Room[]) {
     setRooms(list);
     const selected = selectedRoomId();
-    if (selected && !list.some((room) => room.id === selected)) setSelectedRoomId(null);
+    const managers = buildManagersRoom(list, t("rooms.managers.title"));
+    if (selected === MANAGERS_ROOM_ID ? !managers : selected && !list.some((room) => room.id === selected)) {
+      setSelectedRoomId(null);
+    }
+    if (managers) {
+      if (!(MANAGERS_ROOM_ID in backstageByRoom())) void refreshBackstage(MANAGERS_ROOM_ID);
+      void refreshProfiles(MANAGERS_ROOM_ID);
+    }
     // Backstage is loaded for every room, so activity marks show without opening the room.
     for (const room of list) {
       if (!(room.id in backstageByRoom())) void refreshBackstage(room.id);
@@ -207,6 +222,7 @@ export function createRoomsStore(
 
   return {
     rooms,
+    managersRoom: () => buildManagersRoom(rooms(), t("rooms.managers.title")),
     loaded,
     error,
     selectedRoomId,
@@ -237,7 +253,10 @@ export function createRoomsStore(
     profiles: (roomId) => profilesByRoom()[roomId] ?? [],
     refreshProfiles,
     hasActivity(roomId) {
-      const room = rooms().find((item) => item.id === roomId);
+      const room =
+        roomId === MANAGERS_ROOM_ID
+          ? buildManagersRoom(rooms(), t("rooms.managers.title"))
+          : rooms().find((item) => item.id === roomId);
       if (!room) return false;
       return hasRoomActivity(room, backstageByRoom()[roomId] ?? [], seenByRoom()[roomId] ?? null);
     },

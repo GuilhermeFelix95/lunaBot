@@ -1,3 +1,4 @@
+import { MANAGERS_ROOM_ID } from "@lunabot/contracts/ipc";
 import { createMemo, createSignal, Loading, lazy, Show } from "solid-js";
 import { useAppController } from "./App";
 import { toBotProfile } from "./app-message-projection";
@@ -5,6 +6,7 @@ import { Conversation } from "./components/Conversation";
 import { FIRST_BOT_SUGGESTIONS, FirstBotSetup } from "./components/FirstBotSetup";
 import { PanelResizer, savePanelWidth } from "./components/PanelResizer";
 import { CreateRoomDialog } from "./components/rooms/CreateRoomDialog";
+import { ManagersRoomView } from "./components/rooms/ManagersRoomView";
 import { RoomsSidebar } from "./components/rooms/RoomsSidebar";
 import { RoomView } from "./components/rooms/RoomView";
 import { Sidebar } from "./components/Sidebar";
@@ -346,7 +348,21 @@ export function AppView() {
           roomsStore.openRoom(room.id);
         }}
       />
-      <Show when={!botSetupOpen() && roomsStore.selectedRoomId()}>
+      <Show when={!botSetupOpen() && roomsStore.selectedRoomId() === MANAGERS_ROOM_ID}>
+        <ManagersRoomView
+          store={roomsStore}
+          workingBotIds={workingBotIds()}
+          onSend={async (text) => {
+            const managers = roomsStore.managersRoom()?.members ?? [];
+            await Promise.all(
+              managers.map((member) =>
+                window.lunabot.agent.sendMessage({ botId: member.botId, text, attachmentDraftIds: [] }),
+              ),
+            );
+          }}
+        />
+      </Show>
+      <Show when={!botSetupOpen() && roomsStore.selectedRoomId() !== MANAGERS_ROOM_ID && roomsStore.selectedRoomId()}>
         {(roomId) => (
           <RoomView
             store={roomsStore}
