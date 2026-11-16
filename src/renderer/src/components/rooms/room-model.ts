@@ -1,4 +1,11 @@
-import type { Room, RoomBackstageMessage, RoomMember, RoomRequest } from "@lunabot/contracts/ipc";
+import type {
+  BotAvatarHue,
+  BotSummary,
+  Room,
+  RoomBackstageMessage,
+  RoomMember,
+  RoomRequest,
+} from "@lunabot/contracts/ipc";
 import { ROOM_ACTIVE_BOT_LIMIT, ROOM_NAME_MAX_LENGTH } from "@lunabot/contracts/ipc";
 
 export type RoomNameError = "required" | "tooLong";
@@ -19,6 +26,15 @@ export function toggleRoomBot(selectedBotIds: readonly string[], botId: string):
   if (selectedBotIds.includes(botId)) return selectedBotIds.filter((id) => id !== botId);
   if (!canSelectRoomBot(selectedBotIds, botId)) return [...selectedBotIds];
   return [...selectedBotIds, botId];
+}
+
+/** How a room bot is drawn. A bot whose profile is not loaded yet falls back to its id as the avatar seed. */
+export function roomBotAvatar(
+  profiles: readonly BotSummary[],
+  botId: string,
+): { seed: string; hue: BotAvatarHue | null; url: string | null } {
+  const profile = profiles.find((bot) => bot.id === botId);
+  return { seed: profile?.avatarSeed ?? botId, hue: profile?.avatarHue ?? null, url: profile?.avatarUrl ?? null };
 }
 
 export function roomManager(room: Room): RoomMember | null {
