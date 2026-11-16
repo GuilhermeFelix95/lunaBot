@@ -11,6 +11,7 @@ import {
   DropdownMenu,
   Ellipsis,
   UserMinus,
+  UsersRound,
 } from "../ui";
 import { RoomPurgeDialog } from "./RoomDialogs";
 import { activeRoomMembers, dismissedRoomMembers, roomBotAvatar, roomManager } from "./room-model";
@@ -172,8 +173,8 @@ export function RoomsSidebar(props: RoomsSidebarProps) {
                 title={managers().name}
                 onClick={() => store.openRoom(managers().id, { tab: "backstage" })}
               >
-                <span class="rooms-sidebar-mark" aria-hidden="true">
-                  {managers().name.trim().charAt(0).toUpperCase()}
+                <span class="rooms-sidebar-mark rooms-sidebar-mark-managers" aria-hidden="true">
+                  <UsersRound class="size-3.5" aria-hidden="true" />
                 </span>
                 <Show when={store.hasActivity(managers().id)}>
                   <span class="rooms-activity-dot" role="img" aria-label={t("rooms.activity.label")} />
@@ -224,15 +225,15 @@ export function RoomsSidebar(props: RoomsSidebarProps) {
           <ul class="rooms-sidebar-list">
             <Show when={store.managersRoom()}>
               {(managers) => (
-                <li>
+                <li class="rooms-sidebar-managers">
                   <button
                     type="button"
                     class="rooms-sidebar-room-open"
                     aria-current={store.selectedRoomId() === managers().id ? "page" : undefined}
                     onClick={() => store.openRoom(managers().id, { tab: "backstage" })}
                   >
-                    <span class="rooms-sidebar-mark" aria-hidden="true">
-                      {managers().name.trim().charAt(0).toUpperCase()}
+                    <span class="rooms-sidebar-mark rooms-sidebar-mark-managers" aria-hidden="true">
+                      <UsersRound class="size-3.5" aria-hidden="true" />
                     </span>
                     <span class="rooms-sidebar-room-name">{managers().name}</span>
                     <Show when={store.hasActivity(managers().id)}>

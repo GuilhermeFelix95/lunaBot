@@ -232,7 +232,9 @@
 }
 
 .rooms-sidebar-members {
-  padding-left: var(--lunabot-space-6);
+  margin-left: var(--lunabot-space-3);
+  padding-left: var(--lunabot-space-3);
+  border-left: 1px solid var(--lunabot-border);
 }
 
 .rooms-sidebar-room-row,
@@ -321,6 +323,29 @@
   flex-shrink: 0;
   width: var(--lunabot-icon-md);
   height: var(--lunabot-icon-md);
+}
+
+.rooms-sidebar-room-name {
+  font-weight: var(--lunabot-weight-medium);
+}
+
+.rooms-sidebar-room {
+  display: flex;
+  flex-direction: column;
+  gap: var(--lunabot-space-0-5);
+  padding-bottom: var(--lunabot-space-1-5);
+}
+
+/* The managers room sits apart above the rooms, aligned with them by a spacer the width of the fold button. */
+.rooms-sidebar-managers {
+  margin-bottom: var(--lunabot-space-1-5);
+  padding: 0 0 var(--lunabot-space-1-5) 28px;
+  border-bottom: 1px solid var(--lunabot-border);
+}
+
+.rooms-sidebar-mark-managers {
+  background: var(--lunabot-accent);
+  color: var(--lunabot-accent-ink);
 }
 
 .rooms-sidebar-room-name,

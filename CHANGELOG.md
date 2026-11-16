@@ -15,6 +15,7 @@ All notable changes to Luna Bot are recorded here.
 
 ### Fixed
 
+- The rooms list in the sidebar is easier to read: the managers room has its own icon and sits apart above the rooms, and each room's members hang from a guide line under its name.
 - Running the development version no longer replaces the installed app's Start menu shortcut, so an update opens Luna Bot instead of a blank Electron window. The development copy of Electron now carries the name Luna Bot Dev in its file properties.
 - Bots in a room show the same mascot in the sidebar and the backstage as in the conversation, instead of a different one.
 
