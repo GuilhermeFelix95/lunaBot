@@ -182,10 +182,11 @@ if (process.argv[2] === "auth") {
     await client.stop();
   });
 
-  it("gives a Claude room manager thread the five room tools", async () => {
+  it("gives a Claude room manager thread the six room tools", async () => {
     const mcpServers = await startClaudeThread([LUNABOT_ROOM_DYNAMIC_TOOLS]);
 
     expect(registeredToolNames(mcpServers, "lunabot_room").sort()).toEqual([
+      "list_rooms",
       "request_dismiss",
       "request_hire",
       "request_new_bot",
