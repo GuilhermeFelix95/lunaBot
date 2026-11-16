@@ -4,6 +4,19 @@ All notable changes to Luna Bot are recorded here.
 
 ## [Unreleased]
 
+## [0.2.8] - 2026-11-16
+
+### Added
+
+- In the managers room you can type @ to call one manager, and only that manager answers. Without @ every manager answers.
+- The managers room history is now saved and survives restarts.
+
+### Changed
+
+- The managers room chat is organised by rounds, with a coloured card for each manager's reply and quiet lines for what managers say to each other.
+- Pinned bots now sit in their own "Pinned" section in the sidebar.
+- The browser login card has Luna's own compact look, and the browser bot now finishes the task instead of stopping early.
+
 ## [0.2.7] - 2026-11-16
 
 ### Changed
