@@ -4,6 +4,10 @@ All notable changes to Luna Bot are recorded here.
 
 ## [Unreleased]
 
+### Added
+
+- Room managers can see the other active rooms and message the managers of those rooms to ask for work, such as a banner from a content room. Only managers talk across rooms; members still reach only their own room.
+
 ### Changed
 
 - The development app shows a DEV tag at the top of the window and is titled Luna Bot Dev, so it is never mistaken for the installed app.

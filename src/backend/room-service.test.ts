@@ -485,6 +485,41 @@ describe("RoomService", () => {
     expect(() => rooms.managerTool(copyId, "room_catalog", {})).toThrow("Only the active room manager");
   });
 
+  it("lets a manager list the other active rooms with their manager and members, and nothing else", async () => {
+    const { agents, rooms } = await setup();
+    const helper = await agents.createBotProfile({
+      ...SOURCE,
+      name: "Banner Maker",
+      description: "Designs banners.",
+      avatarSeed: "setup:banner",
+    });
+    const dev = await rooms.createRoom({ name: "Dev", manager: MANAGER });
+    const instagram = await rooms.createRoom({
+      name: "Instagram",
+      manager: { ...MANAGER, name: "Instagram Lead", avatarSeed: "setup:ig-lead" },
+    });
+    const copyId = await rooms.copyBotIntoRoom(instagram.id, helper.id);
+    const archived = await rooms.createRoom({
+      name: "Old",
+      manager: { ...MANAGER, name: "Old Lead", avatarSeed: "setup:old-lead" },
+    });
+    rooms.archiveRoom(archived.id);
+    const devManagerId = dev.members.find((member) => member.role === "manager")?.botId ?? "";
+    const instagramManagerId = instagram.members.find((member) => member.role === "manager")?.botId ?? "";
+
+    const result = JSON.stringify(rooms.managerTool(devManagerId, "list_rooms", {}));
+
+    expect(result).toContain("Instagram");
+    expect(result).toContain(instagramManagerId);
+    expect(result).toContain("Banner Maker");
+    expect(result).toContain("Designs banners.");
+    // Its own room and archived rooms are left out, and a member's id is never handed out: only the manager is addressable.
+    expect(result).not.toContain(devManagerId);
+    expect(result).not.toContain("Old");
+    expect(result).not.toContain(copyId);
+    expect(() => rooms.managerTool(copyId, "list_rooms", {})).toThrow("Only the active room manager");
+  });
+
   it("files manager requests as pending, refuses duplicates and manager dismissal, and applies an approved dismissal", async () => {
     const { agents, rooms } = await setup();
     const source = await agents.createBotProfile(SOURCE);

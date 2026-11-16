@@ -23,6 +23,13 @@ export const LUNABOT_ROOM_DYNAMIC_TOOLS = {
     },
     {
       type: "function",
+      name: "list_rooms",
+      description:
+        "List the other active rooms with their manager and members. Message a manager with send_message to ask that room for work.",
+      inputSchema: { type: "object", properties: {}, additionalProperties: false },
+    },
+    {
+      type: "function",
       name: "request_hire",
       description: "Ask the user to hire a general agent into your room. Nothing changes until the user approves.",
       inputSchema: {

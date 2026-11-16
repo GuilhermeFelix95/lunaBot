@@ -40,6 +40,14 @@ const REQUEST_REASON_MAX_LENGTH = 1_000;
 export type RoomManagerToolResult =
   | { members: Array<{ botId: string; name: string; role: RoomMemberRole }> }
   | { agents: Array<{ botId: string; name: string; title: string; description: string }> }
+  | {
+      rooms: Array<{
+        roomId: string;
+        name: string;
+        managerBotId: string;
+        members: Array<{ name: string; title: string; description: string }>;
+      }>;
+    }
   | { requestId: string; kind: RoomRequestKind; status: RoomRequestStatus };
 
 // A room is a manager bot plus profile-only copies. Room bots are hidden from general listings through room_members.
@@ -386,6 +394,27 @@ export class RoomService extends EventEmitter {
           description: bot.description.slice(0, 240),
         }));
       return { agents };
+    }
+    if (tool === "list_rooms") {
+      const bots = new Map(this.#store.list().map((bot) => [bot.id, bot]));
+      const rooms = this.listRooms()
+        .filter((room) => room.status === "active" && room.id !== roomId)
+        .map((room) => {
+          const active = room.members.filter((member) => member.status === "active");
+          return {
+            roomId: room.id,
+            name: room.name,
+            managerBotId: active.find((member) => member.role === "manager")?.botId ?? "",
+            members: active
+              .filter((member) => member.role !== "manager")
+              .map((member) => ({
+                name: member.name,
+                title: bots.get(member.botId)?.title ?? "",
+                description: (bots.get(member.botId)?.description ?? "").slice(0, 240),
+              })),
+          };
+        });
+      return { rooms };
     }
     if (tool === "request_hire" || tool === "request_dismiss") {
       const request = this.createRequest({

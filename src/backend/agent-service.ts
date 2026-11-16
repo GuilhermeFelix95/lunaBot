@@ -157,7 +157,7 @@ import {
 } from "./protocol";
 import { BUILT_IN_PROVIDER_DRIVERS, requireProviderDriver } from "./provider-drivers";
 import { ROOM_MANAGER_INSTRUCTIONS, roomRequestNoticeMessage } from "./room-manager-instructions";
-import { type BotScope, botScope, canReachBot, sharedRootForScope } from "./room-scope";
+import { type BotScope, botScope, canMessageBot, canReachBot, sharedRootForScope } from "./room-scope";
 import { nextRoutineOccurrence } from "./routine-schedule";
 import { isWithin, sharedPathFromInput, workspacePathFromInput } from "./workspace-paths";
 
@@ -3001,7 +3001,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       throw new Error("Each recipient can be listed only once.");
     }
     if (recipientValues.includes(senderBotId)) throw new Error("Agents can't address messages to themselves.");
-    const knownIds = new Set(this.#reachableBots(senderBotId).map((bot) => bot.id));
+    const knownIds = new Set(this.#messageableBots(senderBotId).map((bot) => bot.id));
     for (const recipient of recipientValues) {
       if (!knownIds.has(recipient)) throw new Error(`Unknown Luna Bot agent: ${recipient}`);
     }
@@ -5071,6 +5071,13 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     const memberships = this.#store.database.roomMemberships();
     const scope = botScope(senderBotId, memberships);
     return this.#knownBots().filter((bot) => canReachBot(scope, bot.id, memberships));
+  }
+
+  // Who a bot may send a message to: everyone it can reach, and for a room manager the managers of other rooms.
+  #messageableBots(senderBotId: string): BotSummary[] {
+    const memberships = this.#store.database.roomMemberships();
+    const scope = botScope(senderBotId, memberships);
+    return this.#knownBots().filter((bot) => canMessageBot(scope, bot.id, memberships));
   }
 
   // Out-of-scope and nonexistent bots fail with the same message so a room bot cannot probe other rooms.
