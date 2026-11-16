@@ -4,8 +4,9 @@ import { dirname, join } from "node:path";
 import { Data, NtExecutable, NtExecutableResource, Resource } from "resedit";
 
 // Bump when the patch logic changes so existing copies are rebuilt.
-const PATCH_REVISION = 1;
-const PRODUCT_NAME = "Luna Bot";
+const PATCH_REVISION = 2;
+// Windows names the Start menu shortcut that notifications write after this resource, so it must differ from the installed app.
+export const DEV_ELECTRON_PRODUCT_NAME = "Luna Bot Dev";
 const MARKER_FILE = "lunabot-dev-marker.txt";
 
 export interface DevElectronIdentity {
@@ -24,7 +25,7 @@ export function devElectronMarker(identity: DevElectronIdentity): string {
     .update(
       JSON.stringify({
         patchRevision: PATCH_REVISION,
-        productName: PRODUCT_NAME,
+        productName: DEV_ELECTRON_PRODUCT_NAME,
         electronVersion: identity.electronVersion,
         iconSha256: identity.iconSha256,
       }),
@@ -102,7 +103,10 @@ function patchExecutable(executablePath: string, iconBytes: Buffer): void {
   const [versionInfo] = Resource.VersionInfo.fromEntries(resources.entries);
   if (!versionInfo) throw new Error("electron.exe has no version resource.");
   for (const language of versionInfo.getAllLanguagesForStringValues()) {
-    versionInfo.setStringValues(language, { ProductName: PRODUCT_NAME, FileDescription: PRODUCT_NAME });
+    versionInfo.setStringValues(language, {
+      ProductName: DEV_ELECTRON_PRODUCT_NAME,
+      FileDescription: DEV_ELECTRON_PRODUCT_NAME,
+    });
   }
   versionInfo.outputToResourceEntries(resources.entries);
 

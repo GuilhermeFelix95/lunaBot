@@ -4,6 +4,10 @@ All notable changes to Luna Bot are recorded here.
 
 ## [Unreleased]
 
+### Fixed
+
+- Running the development version no longer replaces the installed app's Start menu shortcut, so an update opens Luna Bot instead of a blank Electron window. The development copy of Electron now carries the name Luna Bot Dev in its file properties.
+
 ## [0.2.4] - 2026-11-16
 
 ### Changed
