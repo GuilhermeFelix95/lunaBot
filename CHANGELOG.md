@@ -4,6 +4,10 @@ All notable changes to Luna Bot are recorded here.
 
 ## [Unreleased]
 
+### Changed
+
+- Bots in a room's sidebar no longer carry a "copy" label.
+
 ### Fixed
 
 - The line under your message that says the agent is working keeps the same text and animation until the reply ends, instead of changing when the reply moves from the queue to its turn.

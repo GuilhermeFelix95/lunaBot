@@ -37,7 +37,6 @@ export const roomsEn = {
   "rooms.sidebar.reopen": "Reopen",
   "rooms.sidebar.purge": "Delete forever…",
   "rooms.badge.manager": "manager",
-  "rooms.badge.copy": "copy",
   "rooms.badge.dismissed": "dismissed",
   "rooms.archive.action": "Archive room",
   "rooms.archive.title": "Archive {name}?",
