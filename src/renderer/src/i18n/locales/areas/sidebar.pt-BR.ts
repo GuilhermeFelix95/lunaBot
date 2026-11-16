@@ -22,6 +22,7 @@ export const sidebarPtBR: Partial<Record<keyof typeof sidebarEn, string>> = {
   "sidebar.empty.noAgents": "Nenhum agente ainda",
   "sidebar.empty.allHidden": "Todos os agentes estão ocultos",
   "sidebar.empty.noChats": "Nenhuma conversa ainda",
+  "sidebar.pinned.heading": "Fixados",
   "sidebar.pinned.label": "Conversas fixadas",
   "sidebar.pinned.dropHint": "Solte para fixar",
   "sidebar.pinned.limit.one": "Máximo de {count} conversa fixada",

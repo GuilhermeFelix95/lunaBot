@@ -1786,6 +1786,9 @@ export function Sidebar(props: SidebarProps) {
                   if (dragPoint) scheduleSidebarDragTarget(dragPoint);
                 }}
               >
+                <Show when={!props.compact}>
+                  <h2 class="rooms-sidebar-heading sidebar-pinned-heading">{t("sidebar.pinned.heading")}</h2>
+                </Show>
                 <ul class="sidebar-pinned-list" data-dragging={draggedPinnedKey() ? "" : undefined}>
                   <Show when={emptyPinnedDropVisible()}>
                     <li class="sidebar-pinned-empty-drop">{t("sidebar.pinned.dropHint")}</li>
