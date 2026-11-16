@@ -37,7 +37,6 @@ export const roomsPtBR = {
   "rooms.sidebar.reopen": "Reabrir",
   "rooms.sidebar.purge": "Apagar de vez…",
   "rooms.badge.manager": "gerente",
-  "rooms.badge.copy": "cópia",
   "rooms.badge.dismissed": "dispensado",
   "rooms.archive.action": "Arquivar sala",
   "rooms.archive.title": "Arquivar {name}?",
