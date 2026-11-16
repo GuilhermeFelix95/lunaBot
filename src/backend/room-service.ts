@@ -534,6 +534,7 @@ export class RoomService extends EventEmitter {
       return {
         botId,
         name: bots.find((bot) => bot.id === botId)?.name ?? botId,
+        title: bots.find((bot) => bot.id === botId)?.title ?? "",
         role: enumColumn(member, "role", MEMBER_ROLES),
         status: enumColumn(member, "status", MEMBER_STATUSES),
         addedAt: requiredStringColumn(member, "added_at"),

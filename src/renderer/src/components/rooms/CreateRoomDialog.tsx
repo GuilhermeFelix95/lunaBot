@@ -1,3 +1,4 @@
+import { INPUT_LIMITS } from "@lunabot/contracts/input-limits";
 import type { Room, RoomBrowserMode } from "@lunabot/contracts/ipc";
 import { ROOM_ACTIVE_BOT_LIMIT, ROOM_NAME_MAX_LENGTH } from "@lunabot/contracts/ipc";
 import { createSignal, For, Show } from "solid-js";
@@ -42,6 +43,7 @@ interface CreateRoomFormProps {
 // Mounted only while the dialog content is open, so every opening starts from an empty form.
 function CreateRoomForm(props: CreateRoomFormProps) {
   const [name, setName] = createSignal("");
+  const [managerName, setManagerName] = createSignal("");
   const [nameError, setNameError] = createSignal<string | null>(null);
   const [selectedBotIds, setSelectedBotIds] = createSignal<string[]>([]);
   const [browserMode, setBrowserMode] = createSignal<RoomBrowserMode>(DEFAULT_BROWSER_MODE);
@@ -70,7 +72,8 @@ function CreateRoomForm(props: CreateRoomFormProps) {
         browserMode: browserMode(),
         memberBotIds: selectedBotIds(),
         manager: {
-          name: t("rooms.managerName"),
+          name: managerName().trim() || t("rooms.managerName"),
+          title: t("rooms.managerTitle"),
           description: t("rooms.managerDescription"),
           avatarSeed: draft.avatarSeed,
           avatarHue: draft.avatarHue,
@@ -99,6 +102,16 @@ function CreateRoomForm(props: CreateRoomFormProps) {
           placeholder={t("rooms.create.namePlaceholder")}
           autocomplete="off"
           onValueChange={setName}
+        />
+      </Field>
+
+      <Field label={t("rooms.create.managerLabel")} description={t("rooms.create.managerHint")}>
+        <Input
+          value={managerName()}
+          maxlength={INPUT_LIMITS.agentName}
+          placeholder={t("rooms.managerName")}
+          autocomplete="off"
+          onValueChange={setManagerName}
         />
       </Field>
 

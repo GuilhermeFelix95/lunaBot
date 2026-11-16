@@ -325,6 +325,7 @@ function isRoomMember(value: unknown): value is RoomMember {
     isDynamicRecord(value) &&
     isString(value.botId) &&
     isString(value.name) &&
+    isString(value.title) &&
     isOneOf(["manager", "member"] as const, value.role) &&
     isOneOf(["active", "dismissed"] as const, value.status) &&
     isString(value.addedAt) &&

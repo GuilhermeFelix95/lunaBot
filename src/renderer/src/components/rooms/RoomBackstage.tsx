@@ -10,6 +10,7 @@ import { ArrowLeft, Button, Eye, File } from "../ui";
 import {
   type BackstageConversationState,
   backstageConversations,
+  memberLabel,
   type ResponseTime,
   roomBotAvatar,
   selectedBackstageBotId,
@@ -247,7 +248,7 @@ export function RoomBackstage(props: RoomBackstageProps) {
                   />
                   <span class="rooms-backstage-item-main">
                     <span class="rooms-backstage-item-top">
-                      <strong class="rooms-backstage-name">{conversation.name}</strong>
+                      <strong class="rooms-backstage-name">{memberLabel(conversation, t("rooms.managerTitle"))}</strong>
                       <Show when={conversation.lastMessage}>
                         {(last) => <time datetime={last().createdAt}>{timeLabel(last().createdAt)}</time>}
                       </Show>
@@ -297,7 +298,9 @@ export function RoomBackstage(props: RoomBackstageProps) {
                 url={avatarOf(current().botId).url}
                 class="rooms-backstage-avatar rooms-backstage-detail-avatar"
               />
-              <h2 class="rooms-backstage-title">{t("rooms.backstage.title", { name: current().name })}</h2>
+              <h2 class="rooms-backstage-title">
+                {t("rooms.backstage.title", { name: memberLabel(current(), t("rooms.managerTitle")) })}
+              </h2>
               <span class="rooms-backstage-detail-meta">
                 {stateLabel(current().state)}
                 {current().count > 0 ? ` · ${t("rooms.backstage.messageCount", { count: current().count })}` : ""}

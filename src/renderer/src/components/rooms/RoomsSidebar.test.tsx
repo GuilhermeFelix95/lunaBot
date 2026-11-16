@@ -67,6 +67,7 @@ const activeRoom: Room = {
     {
       botId: "bot-manager",
       name: "Room manager",
+      title: "",
       role: "manager",
       status: "active",
       addedAt: timestamp,

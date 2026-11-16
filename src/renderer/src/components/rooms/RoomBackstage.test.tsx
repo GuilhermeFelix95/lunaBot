@@ -10,6 +10,7 @@ const timestamp = "2026-01-01T00:00:00.000Z";
 const manager: RoomMember = {
   botId: "manager",
   name: "Room manager",
+  title: "",
   role: "manager",
   status: "active",
   addedAt: timestamp,
@@ -19,6 +20,7 @@ const manager: RoomMember = {
 const writer: RoomMember = {
   botId: "writer",
   name: "Writer",
+  title: "",
   role: "member",
   status: "active",
   addedAt: timestamp,
@@ -28,6 +30,7 @@ const writer: RoomMember = {
 const reviewer: RoomMember = {
   botId: "reviewer",
   name: "Reviewer",
+  title: "",
   role: "member",
   status: "active",
   addedAt: timestamp,

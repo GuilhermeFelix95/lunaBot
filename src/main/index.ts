@@ -499,8 +499,11 @@ function registerIpcHandlers(
     const botId = requireString(input, "botId", INPUT_LIMITS.identifier);
     return routeDuplicateBot(service, sidebarLayout, botId);
   });
-  handleTrusted(IPC_CHANNELS.agentUpdateBot, (input: unknown) => {
-    return service.updateBot(parseUpdateBot(input));
+  handleTrusted(IPC_CHANNELS.agentUpdateBot, async (input: unknown) => {
+    const updated = await service.updateBot(parseUpdateBot(input));
+    // A room lists its bots by name and title, so a rename has to reach the rooms list too.
+    forwardRoomsChanged(rooms);
+    return updated;
   });
   handleTrusted(IPC_CHANNELS.agentSetAvatar, (input: unknown) => {
     const parsed = parseSetAgentAvatar(input);
