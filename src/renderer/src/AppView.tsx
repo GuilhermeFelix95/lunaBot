@@ -351,7 +351,6 @@ export function AppView() {
       <Show when={!botSetupOpen() && roomsStore.selectedRoomId() === MANAGERS_ROOM_ID}>
         <ManagersRoomView
           store={roomsStore}
-          workingBotIds={workingBotIds()}
           onSend={async (text) => {
             const managers = roomsStore.managersRoom()?.members ?? [];
             await Promise.all(

@@ -988,21 +988,123 @@
   }
 }
 
+.managers-room {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.managers-room-header {
+  display: flex;
+  align-items: center;
+  gap: var(--lunabot-space-3);
+  padding: var(--lunabot-space-4) var(--lunabot-space-5) var(--lunabot-space-3);
+  border-bottom: 1px solid var(--lunabot-border);
+}
+
+.managers-room-heading {
+  display: flex;
+  flex-direction: column;
+  gap: var(--lunabot-space-0-5);
+  min-width: 0;
+}
+
+.managers-room-subtitle {
+  margin: 0;
+  color: var(--lunabot-ink-2);
+  font-size: var(--lunabot-text-sm);
+}
+
+.managers-room-feed {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  gap: var(--lunabot-space-4);
+  min-height: 0;
+  padding: var(--lunabot-space-4) var(--lunabot-space-5);
+  overflow-y: auto;
+}
+
+.managers-room-empty {
+  margin: auto;
+  max-width: 36ch;
+  color: var(--lunabot-ink-2);
+  font-size: var(--lunabot-text-md);
+  text-align: center;
+}
+
+.managers-room-message {
+  display: flex;
+  gap: var(--lunabot-space-3);
+}
+
+.managers-room-avatar {
+  flex-shrink: 0;
+  width: 32px;
+  height: 32px;
+}
+
+.managers-room-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--lunabot-space-1);
+  min-width: 0;
+  padding: var(--lunabot-space-2) var(--lunabot-space-3);
+  border-radius: var(--lunabot-radius-md);
+  background: var(--lunabot-surface-sunken);
+}
+
+.managers-room-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--lunabot-space-2);
+  font-size: var(--lunabot-text-sm);
+}
+
+.managers-room-to,
+.managers-room-time,
+.managers-room-files,
+.managers-room-hint {
+  color: var(--lunabot-ink-2);
+  font-size: var(--lunabot-text-sm);
+}
+
+.managers-room-time {
+  margin-left: auto;
+}
+
+.managers-room-text {
+  margin: 0;
+  font-size: var(--lunabot-text-md);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.managers-room-files {
+  margin: 0;
+}
+
 .managers-room-composer {
   display: flex;
   align-items: flex-end;
   gap: var(--lunabot-space-2);
-  padding: var(--lunabot-space-3);
-  border-top: 1px solid var(--lunabot-border);
+  padding: var(--lunabot-space-3) var(--lunabot-space-5) 0;
 }
 
 .managers-room-input {
   flex: 1 1 auto;
   resize: none;
-  padding: var(--lunabot-space-2);
+  padding: var(--lunabot-space-2) var(--lunabot-space-3);
   border: 1px solid var(--lunabot-border);
   border-radius: var(--lunabot-radius-md);
   background: transparent;
   color: inherit;
   font: inherit;
+}
+
+.managers-room-hint {
+  margin: 0;
+  padding: var(--lunabot-space-1) var(--lunabot-space-5) var(--lunabot-space-3);
 }
