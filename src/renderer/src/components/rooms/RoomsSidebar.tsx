@@ -128,7 +128,6 @@ export function RoomsSidebar(props: RoomsSidebarProps) {
                   >
                     <AgentAvatar seed={member.botId} hue={null} class="rooms-sidebar-avatar" />
                     <span class="rooms-sidebar-member-name">{member.name}</span>
-                    <span class="rooms-badge">{t("rooms.badge.copy")}</span>
                   </button>
                   <DropdownMenu.Root placement="bottom-end" gutter={6} modal={false}>
                     <DropdownMenu.Trigger

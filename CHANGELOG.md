@@ -4,6 +4,10 @@ All notable changes to Luna Bot are recorded here.
 
 ## [Unreleased]
 
+### Changed
+
+- Bots in a room's sidebar no longer carry a "copy" label.
+
 ## [0.2.3] - 2026-11-15
 
 ### Changed
