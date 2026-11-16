@@ -4,8 +4,13 @@ All notable changes to Luna Bot are recorded here.
 
 ## [Unreleased]
 
+### Changed
+
+- The development app shows a DEV tag at the top of the window and is titled Luna Bot Dev, so it is never mistaken for the installed app.
+
 ### Fixed
 
+- Running the development version no longer replaces the installed app's Start menu shortcut, so an update opens Luna Bot instead of a blank Electron window. The development copy of Electron now carries the name Luna Bot Dev in its file properties.
 - Bots in a room show the same mascot in the sidebar and the backstage as in the conversation, instead of a different one.
 
 ## [0.2.4] - 2026-11-16

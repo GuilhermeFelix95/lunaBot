@@ -244,6 +244,11 @@ export function AppView() {
       ]}
       style={`--left-panel-width: ${leftPanelCompact() ? LEFT_PANEL_COMPACT : leftPanelWidth()}px`}
     >
+      <Show when={appInfo()?.variant === "dev"}>
+        <div class="dev-badge" role="note" aria-label={t("misc.app.devBadge")}>
+          DEV
+        </div>
+      </Show>
       <Sidebar
         bots={botList()}
         activeBotId={activeBot()?.id ?? ""}
