@@ -1,5 +1,5 @@
 import { MANAGERS_ROOM_ID } from "@lunabot/contracts/ipc";
-import { createEffect, createSignal, For, Show } from "solid-js";
+import { createEffect, createSignal, For, flush, onSettled, Show } from "solid-js";
 import { t } from "../../i18n";
 import { AgentAvatar } from "../AgentAvatar";
 import { Button, UsersRound } from "../ui";
@@ -16,10 +16,22 @@ function timeLabel(iso: string): string {
   return new Date(iso).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
 }
 
+// What the user said to the managers and what each one answered, kept only while this view is open.
+interface Talk {
+  id: string;
+  botId: string | null; // null: the user
+  text: string;
+  createdAt: string;
+  to: string[];
+}
+
 // The managers room is virtual: a read-only feed of what managers ask each other, plus one box to talk to all of them.
 export function ManagersRoomView(props: ManagersRoomViewProps) {
   const [text, setText] = createSignal("");
   const [sending, setSending] = createSignal(false);
+  const [talk, setTalk] = createSignal<Talk[]>([]);
+  const seenReplies = new Set<string>();
+  let sentAt = 0;
   let feed: HTMLDivElement | undefined;
 
   const messages = () => props.store.backstage(MANAGERS_ROOM_ID);
@@ -27,9 +39,30 @@ export function ManagersRoomView(props: ManagersRoomViewProps) {
     props.store.managersRoom()?.members.find((member) => member.botId === botId)?.name ?? botId;
   const avatarOf = (botId: string) => roomBotAvatar(props.store.profiles(MANAGERS_ROOM_ID), botId);
 
+  const managerIds = () => new Set((props.store.managersRoom()?.members ?? []).map((member) => member.botId));
+
+  // Each manager answers in its own room conversation; the answer is echoed here so the user sees it was heard.
+  onSettled(() => {
+    const unsubscribe = window.lunabot.agent.onEvent((event) => {
+      if (event.type !== "conversation" || sentAt === 0 || !managerIds().has(event.snapshot.botId)) return;
+      for (const message of event.snapshot.messages) {
+        if (message.author !== "assistant" || message.status !== "completed" || !message.text.trim()) continue;
+        if (Date.parse(message.createdAt) < sentAt || seenReplies.has(message.id)) continue;
+        seenReplies.add(message.id);
+        flush(() =>
+          setTalk((items) => [
+            ...items,
+            { id: message.id, botId: event.snapshot.botId, text: message.text, createdAt: message.createdAt, to: [] },
+          ]),
+        );
+      }
+    });
+    return unsubscribe;
+  });
+
   // New messages arrive at the end, so the feed follows them.
   createEffect(
-    () => messages().length,
+    () => messages().length + talk().length,
     () => {
       if (feed) feed.scrollTop = feed.scrollHeight;
     },
@@ -41,7 +74,13 @@ export function ManagersRoomView(props: ManagersRoomViewProps) {
     if (!value || sending()) return;
     setSending(true);
     try {
+      sentAt = Date.now();
       await props.onSend(value);
+      const createdAt = new Date().toISOString();
+      setTalk((items) => [
+        ...items,
+        { id: `user-${createdAt}`, botId: null, text: value, createdAt, to: [...managerIds()] },
+      ]);
       setText("");
     } finally {
       setSending(false);
@@ -63,7 +102,7 @@ export function ManagersRoomView(props: ManagersRoomViewProps) {
           </header>
           <div class="managers-room-feed" ref={feed} role="log" aria-label={room().name}>
             <Show
-              when={messages().length > 0}
+              when={messages().length > 0 || talk().length > 0}
               fallback={<p class="managers-room-empty">{t("rooms.managers.empty")}</p>}
             >
               <For each={messages()}>
@@ -89,6 +128,36 @@ export function ManagersRoomView(props: ManagersRoomViewProps) {
                       <Show when={message.attachmentNames.length > 0}>
                         <p class="managers-room-files">{message.attachmentNames.join(", ")}</p>
                       </Show>
+                    </div>
+                  </article>
+                )}
+              </For>
+              <For each={talk()}>
+                {(item) => (
+                  <article class="managers-room-message">
+                    <Show when={item.botId} fallback={<span class="managers-room-avatar" aria-hidden="true" />}>
+                      {(botId) => (
+                        <AgentAvatar
+                          seed={avatarOf(botId()).seed}
+                          hue={avatarOf(botId()).hue}
+                          url={avatarOf(botId()).url}
+                          class="managers-room-avatar"
+                        />
+                      )}
+                    </Show>
+                    <div class="managers-room-body">
+                      <div class="managers-room-meta">
+                        <strong>{item.botId ? nameOf(item.botId) : t("rooms.managers.you")}</strong>
+                        <Show when={!item.botId}>
+                          <span class="managers-room-to">
+                            {t("rooms.managers.to", { names: item.to.map(nameOf).join(", ") })}
+                          </span>
+                        </Show>
+                        <time class="managers-room-time" datetime={item.createdAt}>
+                          {timeLabel(item.createdAt)}
+                        </time>
+                      </div>
+                      <p class="managers-room-text">{item.text}</p>
                     </div>
                   </article>
                 )}

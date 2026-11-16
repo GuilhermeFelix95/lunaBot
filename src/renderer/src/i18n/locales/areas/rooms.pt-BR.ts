@@ -44,6 +44,7 @@ export const roomsPtBR = {
   "rooms.managers.subtitle": "Os gerentes combinam o trabalho entre as salas. Você acompanha cada pedido aqui.",
   "rooms.managers.empty":
     "Ainda não há pedidos entre gerentes. Quando uma sala precisar de ajuda de outra, aparece aqui.",
+  "rooms.managers.you": "Você",
   "rooms.managers.to": "para {names}",
   "rooms.managers.hint": "Cada gerente responde na conversa da própria sala.",
   "rooms.sidebar.dismissed": "Dispensados",
