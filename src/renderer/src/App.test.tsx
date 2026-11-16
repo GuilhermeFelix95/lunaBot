@@ -2970,6 +2970,63 @@ describe("Luna Bot connected desktop shell", () => {
     expect(screen.getByRole("textbox", { name: "Message Chief" })).toBeVisible();
   });
 
+  it("shows a room member's browser takeover request in the room, where only the manager's chat is open", async () => {
+    const stamp = "2026-01-01T00:00:00.000Z";
+    const member = (botId: string, name: string, role: "manager" | "member") => ({
+      botId,
+      name,
+      title: "",
+      role,
+      status: "active" as const,
+      addedAt: stamp,
+      dismissedAt: null,
+    });
+    vi.mocked(window.lunabot.rooms.list).mockResolvedValue([
+      {
+        id: "room-x",
+        name: "Social X",
+        status: "active",
+        browserMode: "exclusive",
+        createdAt: stamp,
+        updatedAt: stamp,
+        archivedAt: null,
+        members: [member("chief", "Chief", "manager"), member("sales-outbound", "Sales Outbound", "member")],
+        requests: [],
+      },
+    ]);
+    vi.mocked(window.lunabot.rooms.botProfiles).mockResolvedValue(BOTS);
+    render(() => <App />);
+    await screen.findByRole("heading", { name: "Chief" });
+    await confirmOnboardingModel();
+    const roomButton = await waitFor(() => {
+      const button = document.querySelector(".rooms-sidebar-room-open");
+      if (!button) throw new Error("The room is not listed yet.");
+      return button;
+    });
+    await fireEvent.click(roomButton);
+    await waitFor(() => expect(emitAgentEvent).toBeDefined());
+
+    emitAgentEvent?.({
+      type: "browser-takeover-requested",
+      request: {
+        requestId: "takeover-room",
+        botId: "sales-outbound",
+        threadId: "thread-sales",
+        turnId: "turn-1",
+        tabId: "tab-login",
+      },
+    });
+
+    expect(await screen.findByRole("region", { name: "Browser takeover" })).toBeVisible();
+    await fireEvent.click(screen.getByRole("button", { name: "I’m done" }));
+    await waitFor(() =>
+      expect(window.lunabot.agent.respondToBrowserTakeover).toHaveBeenCalledWith({
+        requestId: "takeover-room",
+        decision: "complete",
+      }),
+    );
+  });
+
   it("keeps browser takeover actions available when the preview fails", async () => {
     vi.mocked(window.lunabot.browser.capturePreview).mockRejectedValueOnce(new Error("Preview unavailable"));
     render(() => <App />);

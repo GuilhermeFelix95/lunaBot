@@ -4,6 +4,10 @@ All notable changes to Luna Bot are recorded here.
 
 ## [Unreleased]
 
+### Fixed
+
+- A bot in a room can now ask you to log in. Claude bots had no way to hand the browser over to you, so they stopped at the login page and could only ask you to do it yourself. The request now appears in the room, even when the bot that sent it is a member and not the manager.
+
 ## [0.2.6] - 2026-11-16
 
 ### Added
