@@ -2831,3 +2831,22 @@ textarea {
   border-color: var(--lunabot-border-strong);
   background: var(--lunabot-bg-surface);
 }
+
+/* Tag shown only in the development app, so it is never mistaken for the installed one. */
+.dev-badge {
+  position: fixed;
+  top: 6px;
+  left: 50%;
+  z-index: 60;
+  transform: translateX(-50%);
+  padding: 1px 8px;
+  border-radius: 999px;
+  background: #f5b73c;
+  color: #1f1c17;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  line-height: 16px;
+  pointer-events: none;
+  user-select: none;
+}

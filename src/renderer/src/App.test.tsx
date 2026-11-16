@@ -2413,6 +2413,26 @@ describe("Luna Bot connected desktop shell", () => {
     expect(resizer).toHaveAttribute("aria-valuenow", "240");
   });
 
+  it("marks the development app with a DEV tag and leaves the installed app without one", async () => {
+    const infoFor = (variant: "dev" | "production") => ({
+      name: "Luna Bot",
+      version: "0.2.4",
+      platform: "win32" as const,
+      variant,
+    });
+    vi.mocked(window.lunabot.getAppInfo).mockResolvedValue(infoFor("dev"));
+    const dev = render(() => <App />);
+    await screen.findByRole("heading", { name: "Chief" });
+    expect(await screen.findByRole("note", { name: "Development version" })).toHaveTextContent("DEV");
+    dev.unmount();
+
+    vi.mocked(window.lunabot.getAppInfo).mockResolvedValue(infoFor("production"));
+    render(() => <App />);
+    await screen.findByRole("heading", { name: "Chief" });
+    await waitFor(() => expect(window.lunabot.getAppInfo).toHaveBeenCalled());
+    expect(screen.queryByRole("note", { name: "Development version" })).not.toBeInTheDocument();
+  });
+
   it("lays out the shell on Linux exactly like Windows", async () => {
     const shellClasses = async (platform: "win32" | "linux") => {
       vi.mocked(window.lunabot.getAppInfo).mockResolvedValue({

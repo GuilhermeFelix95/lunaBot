@@ -777,7 +777,7 @@ function createWindow(): BrowserWindow {
     minHeight: 640,
     show: false,
     backgroundColor: windowBackgroundColor(nativeAppearance(), nativeTheme.shouldUseDarkColors),
-    title: nativeMessage("window.title"),
+    title: appVariant === "dev" ? applicationName(false) : nativeMessage("window.title"),
     icon: appIconPath,
     ...(process.platform === "darwin"
       ? { titleBarStyle: "hidden" as const, trafficLightPosition: { x: 8, y: 14 } }
@@ -843,6 +843,8 @@ function createWindow(): BrowserWindow {
   window.on("move", () => rememberMainWindowBounds(window.getNormalBounds()));
   window.on("resize", () => rememberMainWindowBounds(window.getNormalBounds()));
   window.on("hide", () => computerUseMacSetupController?.close());
+  // The page title says "Luna Bot"; the development window keeps its own title so it reads differently in the title bar and taskbar.
+  if (appVariant === "dev") window.on("page-title-updated", (event) => event.preventDefault());
 
   window.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
   window.webContents.on("before-input-event", (event, input) => {

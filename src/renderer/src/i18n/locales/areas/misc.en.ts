@@ -23,6 +23,7 @@ export const miscEn = {
   "misc.app.botCreateFailed": "The Bot could not be created.",
   "misc.app.messageUnavailable": "That message can't be found anymore.",
   "misc.app.duplicateFailed": "Duplicating the agent didn't work",
+  "misc.app.devBadge": "Development version",
   "misc.app.exportFailed": "Exporting the agent didn't work",
   "misc.app.importFailed": "Importing the agent didn't work",
   "misc.app.providerDownloadsUnavailable": "Can't download providers right now.",
