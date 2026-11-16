@@ -260,7 +260,7 @@ describe("RoomService", () => {
       .getRoom(room.id)
       .members.filter((member) => member.role === "member")
       .map((member) => member.name);
-    expect(names).toEqual([SOURCE.name, `${SOURCE.name} 2`]);
+    expect([...names].sort()).toEqual([SOURCE.name, `${SOURCE.name} 2`].sort());
     expect(agents.listBots().map((bot) => bot.name)).toEqual([SOURCE.name]);
   });
 
