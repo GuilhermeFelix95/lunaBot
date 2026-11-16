@@ -25,6 +25,7 @@ export function parseCreateRoom(value: unknown): CreateRoomInput {
     manager: {
       name: requireString(manager.name, "name", INPUT_LIMITS.agentName),
       description: requireString(manager.description, "description", INPUT_LIMITS.agentDescription),
+      ...(manager.title === undefined ? {} : { title: requireString(manager.title, "title", INPUT_LIMITS.agentTitle) }),
       avatarSeed: manager.avatarSeed,
       avatarHue,
     },

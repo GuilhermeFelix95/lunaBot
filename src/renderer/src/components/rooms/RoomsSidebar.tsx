@@ -10,11 +10,12 @@ import {
   ChevronRight,
   DropdownMenu,
   Ellipsis,
+  Pencil,
   UserMinus,
   UsersRound,
 } from "../ui";
-import { RoomPurgeDialog } from "./RoomDialogs";
-import { activeRoomMembers, dismissedRoomMembers, roomBotAvatar, roomManager } from "./room-model";
+import { RoomMemberEditDialog, RoomPurgeDialog } from "./RoomDialogs";
+import { activeRoomMembers, dismissedRoomMembers, memberLabel, roomBotAvatar, roomManager } from "./room-model";
 import type { RoomsStore } from "./rooms-store";
 
 const DISMISSED_GROUP_ID = "rooms:dismissed";
@@ -32,6 +33,8 @@ export function RoomsSidebar(props: RoomsSidebarProps) {
   const [purgeRoomId, setPurgeRoomId] = createSignal<string | null>(null);
   const [purgeName, setPurgeName] = createSignal("");
   const [busy, setBusy] = createSignal(false);
+  const [editTarget, setEditTarget] = createSignal<{ roomId: string; botId: string } | null>(null);
+  const [editError, setEditError] = createSignal<string | null>(null);
 
   const activeRooms = () => store.rooms().filter((room) => room.status === "active");
   const archivedRooms = () => store.rooms().filter((room) => room.status === "archived");
@@ -47,6 +50,24 @@ export function RoomsSidebar(props: RoomsSidebarProps) {
     const member = room?.members.find((item) => item.botId === target?.botId);
     return room && member ? { room, member } : null;
   };
+  const editMember = () => {
+    const target = editTarget();
+    return roomById(target?.roomId ?? "")?.members.find((item) => item.botId === target?.botId) ?? null;
+  };
+  async function saveEdit(input: { name: string; title: string }) {
+    const target = editTarget();
+    if (!target || busy()) return;
+    setBusy(true);
+    setEditError(null);
+    try {
+      await window.lunabot.agent.updateBot({ botId: target.botId, ...input });
+      setEditTarget(null);
+    } catch {
+      setEditError(t("rooms.edit.failed"));
+    } finally {
+      setBusy(false);
+    }
+  }
   const purgeEntry = () => {
     const room = purgeRoomId() ? roomById(purgeRoomId() ?? "") : undefined;
     return room ?? null;
@@ -111,12 +132,27 @@ export function RoomsSidebar(props: RoomsSidebarProps) {
           <ul class="rooms-sidebar-members">
             <Show when={manager}>
               {(entry) => (
-                <li>
+                <li class="rooms-sidebar-member-row">
                   <button type="button" class="rooms-sidebar-member" onClick={() => store.openRoom(room.id)}>
                     <AgentAvatar {...avatarOf(room.id, entry().botId)} class="rooms-sidebar-avatar" />
-                    <span class="rooms-sidebar-member-name">{entry().name}</span>
-                    <span class="rooms-badge rooms-badge-manager">{t("rooms.badge.manager")}</span>
+                    <span class="rooms-sidebar-member-name" title={memberLabel(entry(), t("rooms.managerTitle"))}>
+                      {memberLabel(entry(), t("rooms.managerTitle"))}
+                    </span>
                   </button>
+                  <DropdownMenu.Root placement="bottom-end" gutter={6} modal={false}>
+                    <DropdownMenu.Trigger
+                      class="rooms-sidebar-icon-button"
+                      aria-label={t("rooms.sidebar.memberActions", { name: entry().name })}
+                    >
+                      <Ellipsis class="size-4" aria-hidden="true" />
+                    </DropdownMenu.Trigger>
+                    <DropdownMenu.Content class="ui-action-menu">
+                      <DropdownMenu.Item onSelect={() => setEditTarget({ roomId: room.id, botId: entry().botId })}>
+                        <Pencil class="size-4" aria-hidden="true" />
+                        <span>{t("rooms.sidebar.editMember")}</span>
+                      </DropdownMenu.Item>
+                    </DropdownMenu.Content>
+                  </DropdownMenu.Root>
                 </li>
               )}
             </Show>
@@ -134,7 +170,9 @@ export function RoomsSidebar(props: RoomsSidebarProps) {
                       url={avatarOf(room.id, member.botId).url}
                       class="rooms-sidebar-avatar"
                     />
-                    <span class="rooms-sidebar-member-name">{member.name}</span>
+                    <span class="rooms-sidebar-member-name" title={memberLabel(member, t("rooms.managerTitle"))}>
+                      {memberLabel(member, t("rooms.managerTitle"))}
+                    </span>
                   </button>
                   <DropdownMenu.Root placement="bottom-end" gutter={6} modal={false}>
                     <DropdownMenu.Trigger
@@ -144,6 +182,10 @@ export function RoomsSidebar(props: RoomsSidebarProps) {
                       <Ellipsis class="size-4" aria-hidden="true" />
                     </DropdownMenu.Trigger>
                     <DropdownMenu.Content class="ui-action-menu">
+                      <DropdownMenu.Item onSelect={() => setEditTarget({ roomId: room.id, botId: member.botId })}>
+                        <Pencil class="size-4" aria-hidden="true" />
+                        <span>{t("rooms.sidebar.editMember")}</span>
+                      </DropdownMenu.Item>
                       <DropdownMenu.Item onSelect={() => setDismissTarget({ roomId: room.id, botId: member.botId })}>
                         <UserMinus class="size-4" aria-hidden="true" />
                         <span>{t("rooms.sidebar.dismissMember")}</span>
@@ -359,6 +401,19 @@ export function RoomsSidebar(props: RoomsSidebarProps) {
           )}
         </Show>
       </AlertDialog.Root>
+
+      <RoomMemberEditDialog
+        member={editMember()}
+        busy={busy()}
+        error={editError()}
+        onOpenChange={(open) => {
+          if (!open && !busy()) {
+            setEditTarget(null);
+            setEditError(null);
+          }
+        }}
+        onSave={(input) => void saveEdit(input)}
+      />
 
       <RoomPurgeDialog
         room={purgeEntry()}

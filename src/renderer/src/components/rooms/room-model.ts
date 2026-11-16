@@ -37,6 +37,12 @@ export function roomBotAvatar(
   return { seed: profile?.avatarSeed ?? botId, hue: profile?.avatarHue ?? null, url: profile?.avatarUrl ?? null };
 }
 
+// A bot in a room reads as "Name - Role". A manager without a role of its own falls back to the manager label.
+export function memberLabel(member: Pick<RoomMember, "name" | "title" | "role">, managerRole: string): string {
+  const role = member.title.trim() || (member.role === "manager" ? managerRole : "");
+  return role ? `${member.name} - ${role}` : member.name;
+}
+
 export function roomManager(room: Room): RoomMember | null {
   return room.members.find((member) => member.role === "manager" && member.status === "active") ?? null;
 }
@@ -74,6 +80,8 @@ export interface ResponseTime {
 export interface BackstageConversation {
   botId: string;
   name: string;
+  title: string;
+  role: RoomMember["role"];
   // Oldest first, as shown in the bubbles.
   messages: RoomBackstageMessage[];
   lastMessage: RoomBackstageMessage | null;
@@ -157,6 +165,8 @@ export function backstageConversations(
     return {
       botId: member.botId,
       name: member.name,
+      title: member.title,
+      role: member.role,
       messages: involved,
       lastMessage,
       preview: lastMessage ? plainPreview(lastMessage.text) : "",

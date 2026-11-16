@@ -15,6 +15,8 @@ export type RoomRequestStatus = "pending" | "rejected" | "fulfilled";
 export interface RoomMember {
   botId: string;
   name: string;
+  /** The bot's role label, shown next to its name, such as Manager. Empty when the bot has none. */
+  title: string;
   role: RoomMemberRole;
   status: RoomMemberStatus;
   addedAt: string;
@@ -58,7 +60,7 @@ export interface Room {
 
 export interface CreateRoomInput {
   name: string;
-  manager: Omit<CreateBotInput, "initialMessage">;
+  manager: Omit<CreateBotInput, "initialMessage"> & { title?: string };
   // Optional: defaults to "exclusive" and no hired members.
   browserMode?: RoomBrowserMode;
   // General bots to hire as copies at creation. At most ROOM_ACTIVE_BOT_LIMIT, all unique.

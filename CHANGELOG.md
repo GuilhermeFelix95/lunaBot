@@ -4,6 +4,10 @@ All notable changes to Luna Bot are recorded here.
 
 ## [Unreleased]
 
+### Added
+
+- Bots in a room show a name and a role, such as Guilherme - Manager, in the sidebar and in the backstage. The new room dialog asks for the manager's name, and every bot in a room has an Edit name and role item in its menu. Renaming a hired bot never changes the original.
+
 ## [0.2.5] - 2026-11-16
 
 ### Added

@@ -59,6 +59,7 @@ describe("toggleRoomBot", () => {
 const member = (botId: string, role: RoomMember["role"], status: RoomMember["status"] = "active"): RoomMember => ({
   botId,
   name: botId,
+  title: "",
   role,
   status,
   addedAt: "2026-01-01T00:00:00.000Z",

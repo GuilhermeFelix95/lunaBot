@@ -620,6 +620,27 @@ describe("RoomService", () => {
     expect(clear).toHaveBeenCalledWith(room.id);
   });
 
+  it("names the manager and shows each member's role next to its name", async () => {
+    const { agents, rooms } = await setup();
+    const source = await agents.createBotProfile({ ...SOURCE, name: "Planner" });
+    await agents.updateBot({ botId: source.id, title: "Planning lead" });
+    const room = await rooms.createRoom({
+      name: "Launch",
+      manager: { ...MANAGER, name: "Guilherme", title: "Manager" },
+      memberBotIds: [source.id],
+    });
+
+    const [manager, member] = room.members;
+    expect(manager).toMatchObject({ name: "Guilherme", title: "Manager", role: "manager" });
+    expect(member).toMatchObject({ name: "Planner", title: "Planning lead", role: "member" });
+
+    // Renaming the copy changes the room, not the bot it was copied from.
+    await agents.updateBot({ botId: member?.botId ?? "", name: "Ana", title: "Planner" });
+    const renamed = rooms.getRoom(room.id).members.find((item) => item.role === "member");
+    expect(renamed).toMatchObject({ name: "Ana", title: "Planner" });
+    expect((await agents.listBots()).find((bot) => bot.id === source.id)).toMatchObject({ name: "Planner" });
+  });
+
   it("shows the managers room feed only for messages between managers of different rooms", async () => {
     const { agents, mailbox, rooms } = await setup();
     const helper = await agents.createBotProfile(SOURCE);

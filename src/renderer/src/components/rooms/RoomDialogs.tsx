@@ -1,5 +1,6 @@
-import type { Room } from "@lunabot/contracts/ipc";
-import { Show } from "solid-js";
+import { INPUT_LIMITS } from "@lunabot/contracts/input-limits";
+import type { Room, RoomMember } from "@lunabot/contracts/ipc";
+import { createSignal, Show } from "solid-js";
 import { type TranslationKey, t } from "../../i18n";
 import { AlertDialog, Button, Field, Input } from "../ui";
 import { canPurgeRoom } from "./room-model";
@@ -85,6 +86,74 @@ export function RoomPurgeDialog(props: RoomPurgeDialogProps) {
                   {t("rooms.purge.confirm")}
                 </Button>
               </div>
+            </AlertDialog.Content>
+          </AlertDialog.Portal>
+        )}
+      </Show>
+    </AlertDialog.Root>
+  );
+}
+
+export interface RoomMemberEditDialogProps {
+  /** The bot being edited, or null when the dialog is closed. */
+  member: RoomMember | null;
+  busy: boolean;
+  error: string | null;
+  onOpenChange: (open: boolean) => void;
+  onSave: (input: { name: string; title: string }) => void;
+}
+
+function RoomMemberEditForm(props: RoomMemberEditDialogProps & { member: RoomMember }) {
+  const [name, setName] = createSignal(props.member.name);
+  const [title, setTitle] = createSignal(
+    props.member.title || (props.member.role === "manager" ? t("rooms.managerTitle") : ""),
+  );
+  return (
+    <form
+      class="rooms-create-form"
+      onSubmit={(event) => {
+        event.preventDefault();
+        if (name().trim()) props.onSave({ name: name().trim(), title: title().trim() });
+      }}
+    >
+      <Field label={t("rooms.edit.nameLabel")}>
+        <Input value={name()} maxlength={INPUT_LIMITS.agentName} autocomplete="off" onValueChange={setName} />
+      </Field>
+      <Field label={t("rooms.edit.roleLabel")} description={t("rooms.edit.roleHint")}>
+        <Input value={title()} maxlength={INPUT_LIMITS.agentTitle} autocomplete="off" onValueChange={setTitle} />
+      </Field>
+      <Show when={props.error}>{(message) => <p role="alert">{message()}</p>}</Show>
+      <div class="rooms-dialog-actions">
+        <Button variant="ghost" disabled={props.busy} onClick={() => props.onOpenChange(false)}>
+          {t("rooms.purge.cancel")}
+        </Button>
+        <Button type="submit" disabled={props.busy || name().trim().length === 0}>
+          {t("rooms.edit.save")}
+        </Button>
+      </div>
+    </form>
+  );
+}
+
+// Changes the name and role of one bot in a room. A hired copy is a separate bot, so the original is never touched.
+export function RoomMemberEditDialog(props: RoomMemberEditDialogProps) {
+  return (
+    <AlertDialog.Root open={props.member !== null} onOpenChange={props.onOpenChange}>
+      <Show when={props.member}>
+        {(member) => (
+          <AlertDialog.Portal>
+            <AlertDialog.Overlay class="ui-scrim rooms-dialog-backdrop" />
+            <AlertDialog.Content class="rooms-dialog">
+              <AlertDialog.Title class="rooms-dialog-title">
+                {t("rooms.edit.title", { name: member().name })}
+              </AlertDialog.Title>
+              <RoomMemberEditForm
+                member={member()}
+                busy={props.busy}
+                error={props.error}
+                onOpenChange={props.onOpenChange}
+                onSave={props.onSave}
+              />
             </AlertDialog.Content>
           </AlertDialog.Portal>
         )}
