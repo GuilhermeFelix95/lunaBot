@@ -151,6 +151,7 @@ interface MailboxProjectionState {
  * SQLite transaction. Providers never receive direct access to this database.
  */
 export class LunaBotDatabase {
+  #mailboxRows: MailboxRowFingerprints | null = null;
   readonly path: string;
   readonly #legacyBackupRoot: string;
   #db: DatabaseSync | null = null;
@@ -395,6 +396,8 @@ export class LunaBotDatabase {
         db.prepare("DELETE FROM projection_agent_routines WHERE agent_id = ?").run(botId);
         db.prepare("DELETE FROM projection_reactions WHERE agent_id = ?").run(botId);
         db.prepare("DELETE FROM projection_deliveries WHERE recipient_agent_id = ?").run(botId);
+        // These rows were removed outside the mailbox writer, so its record of the rows is stale.
+        this.#mailboxRows = null;
         db.prepare("DELETE FROM projection_queue_state WHERE agent_id = ?").run(botId);
         if (threadId) {
           db.prepare("DELETE FROM projection_threads WHERE thread_id = ?").run(threadId);
@@ -1514,6 +1517,8 @@ export class LunaBotDatabase {
     return this.readConversation(thread.agent_id, threadId);
   }
 
+  // Writes the mailbox into its projection tables. After the first write only rows that changed are touched, so the
+  // cost follows the size of the change and not the size of the whole history.
   replaceMailboxState(
     commandId: string,
     state: MailboxProjectionState,
@@ -1521,6 +1526,10 @@ export class LunaBotDatabase {
     fileDeletions: string[] = [],
     _rebaseHistory = false,
   ): void {
+    // Inside a caller's transaction a rollback could leave the row cache ahead of the database, so rewrite everything.
+    const cache = this.connection.isTransaction ? null : this.#mailboxRows;
+    if (this.connection.isTransaction) this.#mailboxRows = null;
+    let written: MailboxRowFingerprints | null = null;
     this.dispatch(
       commandId,
       [
@@ -1528,7 +1537,8 @@ export class LunaBotDatabase {
           aggregateType: "mailbox",
           aggregateId: "mailbox",
           eventType,
-          payload: state,
+          // The projection tables are the source of truth; the event only records that the mailbox changed.
+          payload: { messages: state.messages.length, deliveries: state.deliveries.length },
         },
       ],
       (db, sequences) => {
@@ -1538,111 +1548,7 @@ export class LunaBotDatabase {
            WHERE aggregate_type = 'mailbox' AND aggregate_id = 'mailbox' AND sequence < ?`,
         ).run(sequence);
         deleteOrphanReceipts(db);
-        const value = state;
-        db.exec("DELETE FROM projection_deliveries");
-        db.exec("DELETE FROM projection_mailbox_messages");
-        db.exec("DELETE FROM projection_queue_state");
-        db.exec("DELETE FROM projection_reactions");
-        db.exec("DELETE FROM projection_attachments WHERE owner_kind IN ('mailbox-message', 'draft', 'generated')");
-        const messageInsert = db.prepare(`
-          INSERT INTO projection_mailbox_messages
-            (message_id, sender_kind, sender_agent_id, text, reply_to_message_id, created_at, message_json, last_event_sequence)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-        `);
-        const attachmentInsert = db.prepare(`
-          INSERT INTO projection_attachments
-            (attachment_id, owner_kind, owner_id, name, path, metadata_json, created_at, last_event_sequence)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-        `);
-        for (const message of value.messages) {
-          const sender = message.sender;
-          messageInsert.run(
-            String(message.id),
-            sender.kind,
-            sender.botId ?? null,
-            String(message.text),
-            isString(message.replyToMessageId) ? message.replyToMessageId : null,
-            String(message.createdAt),
-            JSON.stringify(message),
-            sequence,
-          );
-          for (const attachment of message.attachments) {
-            attachmentInsert.run(
-              String(attachment.id),
-              "mailbox-message",
-              String(message.id),
-              String(attachment.name),
-              String(attachment.path),
-              JSON.stringify(attachment),
-              String(message.createdAt),
-              sequence,
-            );
-          }
-        }
-        const deliveryInsert = db.prepare(`
-          INSERT INTO projection_deliveries
-            (delivery_id, message_id, recipient_agent_id, status, turn_id, error, created_at, delivery_json, last_event_sequence)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-        `);
-        for (const delivery of value.deliveries) {
-          deliveryInsert.run(
-            String(delivery.id),
-            String(delivery.messageId),
-            String(delivery.recipientBotId),
-            String(delivery.status),
-            isString(delivery.turnId) ? delivery.turnId : null,
-            isString(delivery.error) ? delivery.error : null,
-            String(delivery.createdAt),
-            JSON.stringify(delivery),
-            sequence,
-          );
-        }
-        const queueInsert = db.prepare(`
-          INSERT INTO projection_queue_state
-            (agent_id, paused, metadata_json, last_event_sequence) VALUES (?, ?, ?, ?)
-        `);
-        queueInsert.run("__mailbox__", 0, JSON.stringify({ idempotency: value.idempotency }), sequence);
-        for (const botId of value.pausedBotIds) queueInsert.run(botId, 1, "{}", sequence);
-        const reactionInsert = db.prepare(`
-          INSERT INTO projection_reactions
-            (agent_id, message_id, emoji, actor_kind, actor_bot_id, updated_at, last_event_sequence)
-          VALUES (?, ?, ?, ?, ?, ?, ?)
-        `);
-        for (const reaction of value.reactions) {
-          reactionInsert.run(
-            String(reaction.botId),
-            String(reaction.messageId),
-            String(reaction.emoji),
-            reaction.actor.kind,
-            reaction.actor.kind === "bot" ? reaction.actor.botId : "",
-            String(reaction.updatedAt),
-            sequence,
-          );
-        }
-        for (const draft of value.drafts) {
-          attachmentInsert.run(
-            String(draft.id),
-            "draft",
-            String(draft.id),
-            String(draft.name),
-            String(draft.path),
-            JSON.stringify(draft),
-            String(draft.createdAt),
-            sequence,
-          );
-        }
-        for (const attachment of value.generatedAttachments) {
-          attachmentInsert.run(
-            String(attachment.id),
-            "generated",
-            String(attachment.id),
-            String(attachment.name),
-            String(attachment.path),
-            JSON.stringify(attachment),
-            new Date().toISOString(),
-            sequence,
-          );
-        }
+        written = writeMailboxProjection(db, state, sequence, cache);
         const outboxInsert = db.prepare(`
           INSERT OR IGNORE INTO file_deletion_outbox
             (id, path, reason, created_at, attempts, last_error)
@@ -1654,6 +1560,7 @@ export class LunaBotDatabase {
         return null;
       },
     );
+    if (written) this.#mailboxRows = written;
   }
 
   pendingFileDeletions(): Array<{ id: string; path: string }> {
@@ -2161,6 +2068,183 @@ function pruneConversationSnapshots(db: DatabaseSync, threadId: string, retained
        AND json_type(payload_json, '$.snapshot') = 'object'`,
   ).run(threadId, retainedSequence);
   deleteOrphanReceipts(db);
+}
+
+// What the mailbox projection tables held after the last write, as one comparable string per row. A later write
+// compares against it so unchanged rows are not rewritten.
+interface MailboxRowFingerprints {
+  messages: Map<string, string>;
+  deliveries: Map<string, string>;
+  attachments: Map<string, string>;
+  reactions: Map<string, string>;
+}
+
+function writeMailboxProjection(
+  db: DatabaseSync,
+  value: MailboxProjectionState,
+  sequence: number,
+  previous: MailboxRowFingerprints | null,
+): MailboxRowFingerprints {
+  if (previous === null) {
+    db.exec("DELETE FROM projection_deliveries");
+    db.exec("DELETE FROM projection_mailbox_messages");
+    db.exec("DELETE FROM projection_reactions");
+    db.exec("DELETE FROM projection_attachments WHERE owner_kind IN ('mailbox-message', 'draft', 'generated')");
+  }
+  db.exec("DELETE FROM projection_queue_state");
+  const next: MailboxRowFingerprints = {
+    messages: new Map(),
+    deliveries: new Map(),
+    attachments: new Map(),
+    reactions: new Map(),
+  };
+  const messageUpsert = db.prepare(`
+    INSERT INTO projection_mailbox_messages
+      (message_id, sender_kind, sender_agent_id, text, reply_to_message_id, created_at, message_json, last_event_sequence)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    ON CONFLICT(message_id) DO UPDATE SET
+      sender_kind = excluded.sender_kind, sender_agent_id = excluded.sender_agent_id, text = excluded.text,
+      reply_to_message_id = excluded.reply_to_message_id, created_at = excluded.created_at,
+      message_json = excluded.message_json, last_event_sequence = excluded.last_event_sequence
+  `);
+  const attachmentUpsert = db.prepare(`
+    INSERT INTO projection_attachments
+      (attachment_id, owner_kind, owner_id, name, path, metadata_json, created_at, last_event_sequence)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    ON CONFLICT(attachment_id) DO UPDATE SET
+      owner_kind = excluded.owner_kind, owner_id = excluded.owner_id, name = excluded.name, path = excluded.path,
+      metadata_json = excluded.metadata_json, created_at = excluded.created_at,
+      last_event_sequence = excluded.last_event_sequence
+  `);
+  const deliveryUpsert = db.prepare(`
+    INSERT INTO projection_deliveries
+      (delivery_id, message_id, recipient_agent_id, status, turn_id, error, created_at, delivery_json, last_event_sequence)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ON CONFLICT(delivery_id) DO UPDATE SET
+      message_id = excluded.message_id, recipient_agent_id = excluded.recipient_agent_id, status = excluded.status,
+      turn_id = excluded.turn_id, error = excluded.error, created_at = excluded.created_at,
+      delivery_json = excluded.delivery_json, last_event_sequence = excluded.last_event_sequence
+  `);
+  const reactionUpsert = db.prepare(`
+    INSERT INTO projection_reactions
+      (agent_id, message_id, emoji, actor_kind, actor_bot_id, updated_at, last_event_sequence)
+    VALUES (?, ?, ?, ?, ?, ?, ?)
+    ON CONFLICT(agent_id, message_id, actor_kind, actor_bot_id) DO UPDATE SET
+      emoji = excluded.emoji, updated_at = excluded.updated_at, last_event_sequence = excluded.last_event_sequence
+  `);
+
+  const upsertAttachment = (
+    ownerKind: string,
+    ownerId: string,
+    attachment: { id: string; name: string; path: string },
+    createdAt: string,
+    stable: boolean,
+  ): void => {
+    const id = String(attachment.id);
+    const json = JSON.stringify(attachment);
+    // A generated attachment has no creation time of its own, so its time is left out of the comparison.
+    const fingerprint = `${ownerKind}\u0000${ownerId}\u0000${json}${stable ? `\u0000${createdAt}` : ""}`;
+    next.attachments.set(id, fingerprint);
+    if (previous?.attachments.get(id) === fingerprint) return;
+    attachmentUpsert.run(
+      id,
+      ownerKind,
+      ownerId,
+      String(attachment.name),
+      String(attachment.path),
+      json,
+      createdAt,
+      sequence,
+    );
+  };
+
+  for (const message of value.messages) {
+    const id = String(message.id);
+    const sender = message.sender;
+    const json = JSON.stringify(message);
+    next.messages.set(id, json);
+    if (previous?.messages.get(id) !== json) {
+      messageUpsert.run(
+        id,
+        sender.kind,
+        sender.botId ?? null,
+        String(message.text),
+        isString(message.replyToMessageId) ? message.replyToMessageId : null,
+        String(message.createdAt),
+        json,
+        sequence,
+      );
+    }
+    for (const attachment of message.attachments) {
+      upsertAttachment("mailbox-message", id, attachment, String(message.createdAt), true);
+    }
+  }
+  for (const delivery of value.deliveries) {
+    const id = String(delivery.id);
+    const json = JSON.stringify(delivery);
+    next.deliveries.set(id, json);
+    if (previous?.deliveries.get(id) === json) continue;
+    deliveryUpsert.run(
+      id,
+      String(delivery.messageId),
+      String(delivery.recipientBotId),
+      String(delivery.status),
+      isString(delivery.turnId) ? delivery.turnId : null,
+      isString(delivery.error) ? delivery.error : null,
+      String(delivery.createdAt),
+      json,
+      sequence,
+    );
+  }
+  for (const reaction of value.reactions) {
+    const actorBotId = reaction.actor.kind === "bot" ? reaction.actor.botId : "";
+    const key = [reaction.botId, reaction.messageId, reaction.actor.kind, actorBotId].map(String).join("\u0000");
+    const fingerprint = `${reaction.emoji}\u0000${reaction.updatedAt}`;
+    next.reactions.set(key, fingerprint);
+    if (previous?.reactions.get(key) === fingerprint) continue;
+    reactionUpsert.run(
+      String(reaction.botId),
+      String(reaction.messageId),
+      String(reaction.emoji),
+      reaction.actor.kind,
+      actorBotId,
+      String(reaction.updatedAt),
+      sequence,
+    );
+  }
+  for (const draft of value.drafts) {
+    upsertAttachment("draft", String(draft.id), draft, String(draft.createdAt), true);
+  }
+  const generatedAt = new Date().toISOString();
+  for (const attachment of value.generatedAttachments) {
+    upsertAttachment("generated", String(attachment.id), attachment, generatedAt, false);
+  }
+
+  if (previous !== null) {
+    // Children go first: a delivery row belongs to its message row.
+    const deleteDelivery = db.prepare("DELETE FROM projection_deliveries WHERE delivery_id = ?");
+    for (const id of previous.deliveries.keys()) if (!next.deliveries.has(id)) deleteDelivery.run(id);
+    const deleteMessage = db.prepare("DELETE FROM projection_mailbox_messages WHERE message_id = ?");
+    for (const id of previous.messages.keys()) if (!next.messages.has(id)) deleteMessage.run(id);
+    const deleteAttachment = db.prepare("DELETE FROM projection_attachments WHERE attachment_id = ?");
+    for (const id of previous.attachments.keys()) if (!next.attachments.has(id)) deleteAttachment.run(id);
+    const deleteReaction = db.prepare(
+      "DELETE FROM projection_reactions WHERE agent_id = ? AND message_id = ? AND actor_kind = ? AND actor_bot_id = ?",
+    );
+    for (const key of previous.reactions.keys()) {
+      if (next.reactions.has(key)) continue;
+      const [agentId, messageId, actorKind, actorBotId] = key.split("\u0000");
+      deleteReaction.run(agentId ?? "", messageId ?? "", actorKind ?? "", actorBotId ?? "");
+    }
+  }
+
+  const queueInsert = db.prepare(`
+    INSERT INTO projection_queue_state
+      (agent_id, paused, metadata_json, last_event_sequence) VALUES (?, ?, ?, ?)
+  `);
+  queueInsert.run("__mailbox__", 0, JSON.stringify({ idempotency: value.idempotency }), sequence);
+  for (const botId of value.pausedBotIds) queueInsert.run(botId, 1, "{}", sequence);
+  return next;
 }
 
 function deleteOrphanReceipts(db: DatabaseSync): void {

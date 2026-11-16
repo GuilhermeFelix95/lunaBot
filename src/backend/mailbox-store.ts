@@ -1386,8 +1386,20 @@ export class MailboxStore {
     await this.#persist("delivery.updated");
   }
 
+  // Messages are looked up once per delivery when a queue is listed, so the lookup is indexed. The index is rebuilt
+  // whenever the message list is replaced or grows, which are the only ways the list changes.
+  #messageIndex: { source: StoredMessage[]; size: number; byId: Map<string, StoredMessage> } | null = null;
+
   #requireMessage(id: string): StoredMessage {
-    const message = this.#state.messages.find((candidate) => candidate.id === id);
+    const messages = this.#state.messages;
+    if (this.#messageIndex?.source !== messages || this.#messageIndex.size !== messages.length) {
+      this.#messageIndex = {
+        source: messages,
+        size: messages.length,
+        byId: new Map(messages.map((item) => [item.id, item])),
+      };
+    }
+    const message = this.#messageIndex.byId.get(id);
     if (!message) throw new Error(`Mailbox message is missing: ${id}`);
     return message;
   }

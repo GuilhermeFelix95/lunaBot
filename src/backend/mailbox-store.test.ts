@@ -33,6 +33,43 @@ afterEach(async () => {
 });
 
 describe("MailboxStore", () => {
+  it("stores only the changed rows and still reloads exactly what is in memory", async () => {
+    const userData = join(root, "user-data");
+    const shared = join(root, "Shared");
+    const sameAsReloaded = async (botIds: string[]) => {
+      const reloaded = openMailboxStore(userData, shared);
+      await reloaded.initialize();
+      for (const botId of botIds) expect(reloaded.listQueue(botId)).toEqual(store.listQueue(botId));
+      expect(reloaded.conversationMessages("chief")).toEqual(store.conversationMessages("chief"));
+    };
+    const bots = ["chief", "writer"];
+    // Rows reload ordered by creation time, so messages are spaced out to keep that order unambiguous.
+    const tick = () => new Promise((resolve) => setTimeout(resolve, 3));
+
+    const first = await store.enqueue({ sender: { kind: "user" }, recipientBotIds: bots, text: "One" });
+    await tick();
+    const second = await store.enqueue({ sender: { kind: "user" }, recipientBotIds: ["chief"], text: "Two" });
+    await tick();
+    await store.enqueue({ sender: { kind: "user" }, recipientBotIds: ["chief"], text: "Three", idempotencyKey: "k" });
+    await sameAsReloaded(bots);
+
+    const [firstChief] = first.deliveries.filter((delivery) => delivery.recipientBotId === "chief");
+    await store.markStarting(firstChief?.id ?? "");
+    await store.markRunning(firstChief?.id ?? "", "turn-1");
+    await sameAsReloaded(bots);
+    await store.markTerminal(firstChief?.id ?? "", "completed");
+    await store.setReaction("chief", first.messageId, { kind: "user" }, "👍");
+    await sameAsReloaded(bots);
+
+    await store.cancel("chief", second.deliveries[0]?.id ?? "");
+    await store.setReaction("chief", first.messageId, { kind: "user" }, null);
+    await store.deleteBotData("writer");
+    await tick();
+    await store.enqueue({ sender: { kind: "user" }, recipientBotIds: ["chief"], text: "After removal" });
+    await sameAsReloaded(["chief", "writer"]);
+    expect(store.listQueue("writer").deliveries).toEqual([]);
+  });
+
   it("keeps staged generated attachments out of unrelated mailbox writes", async () => {
     const sourcePath = join(root, "staged-screenshot.png");
     await writeFile(sourcePath, "image bytes");
