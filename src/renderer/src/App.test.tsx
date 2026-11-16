@@ -725,6 +725,43 @@ describe("Luna Bot connected desktop shell", () => {
     expect(screen.queryByRole("button", { name: "Open routine Archived brief" })).not.toBeInTheDocument();
   });
 
+  it("keeps the same activity label while one reply moves from its delivery to its turn", async () => {
+    render(() => <App />);
+    await screen.findByRole("heading", { name: "Chief" });
+    await confirmOnboardingModel();
+    await waitFor(() => expect(window.lunabot.agent.listQueue).toHaveBeenCalledWith("chief"));
+
+    emitAgentEvent?.({
+      type: "queue-changed",
+      snapshot: {
+        botId: "chief",
+        deliveries: [queuedDelivery("delivery-a", "Say hello", null, { status: "running", turnId: "turn-a" })],
+      },
+    });
+    const indicator = await screen.findByRole("status", { name: "Chief is working" });
+    const label = indicator.querySelector(".agent-activity-label")?.textContent;
+    expect(label).toBeTruthy();
+
+    emitAgentEvent?.({
+      type: "runtime-snapshot",
+      snapshot: {
+        bots: [],
+        activeTurns: [{ botId: "chief", threadId: "thread-chief", turnId: "turn-a" }],
+        work: [],
+        latestMessages: [],
+        attentionComplete: false,
+        pendingPrompts: [],
+        pendingApprovals: [],
+        pendingBrowserTakeovers: [],
+        failedTurns: [],
+      },
+    });
+    emitAgentEvent?.({ type: "queue-changed", snapshot: { botId: "chief", deliveries: [] } });
+
+    const after = await screen.findByRole("status", { name: "Chief is working" });
+    expect(after.querySelector(".agent-activity-label")?.textContent).toBe(label);
+  });
+
   it("preserves omitted attention only when a compact runtime snapshot is incomplete", async () => {
     render(() => <App />);
     await screen.findByRole("heading", { name: "Chief" });

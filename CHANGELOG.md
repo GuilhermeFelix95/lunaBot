@@ -11,6 +11,7 @@ All notable changes to Luna Bot are recorded here.
 ### Fixed
 
 - Turns that had already finished no longer go back to "running" in the stored history, and turns left running by a restart are closed when the app opens.
+- The line under your message that says the agent is working keeps the same text and animation until the reply ends, instead of changing when the reply moves from the queue to its turn.
 
 ## [0.2.3] - 2026-11-15
 

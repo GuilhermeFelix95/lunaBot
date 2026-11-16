@@ -630,13 +630,19 @@ function createConversationViewScope(props: ConversationProps) {
     const botId = props.bot?.id;
     if (!botId) return null;
     const delivery = activeDeliveries()[0];
-    if (delivery) return `${botId}:delivery:${delivery.id}`;
-    if (props.activeTurnId) return `${botId}:turn:${props.activeTurnId}`;
     const streamingMessage = streamingAgentMessage();
-    if (!streamingMessage) return null;
+    const next = delivery
+      ? `${botId}:delivery:${delivery.id}`
+      : props.activeTurnId
+        ? `${botId}:turn:${props.activeTurnId}`
+        : streamingMessage
+          ? `${botId}:message:${streamingMessage.id}`
+          : null;
+    if (!next) return null;
+    // One reply is known first by its delivery, then its turn, then its message. The label must not change with each.
     const current = untrack(renderedAgentActivity);
     if (current?.bot?.id === botId) return current.activityId;
-    return `${botId}:message:${streamingMessage.id}`;
+    return next;
   });
   const agentActivity = createMemo<"Working" | null>(() => (activeActivityId() ? "Working" : null));
   const activityPresentation = createMemo<AgentActivityPresentation | null>(() => {
