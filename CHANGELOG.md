@@ -7,7 +7,8 @@ All notable changes to Luna Bot are recorded here.
 ### Added
 
 - Room managers can see the other active rooms and message the managers of those rooms to ask for work, such as a banner from a content room. Only managers talk across rooms; members still reach only their own room.
-- A managers room appears in the sidebar once two rooms are active. It shows the requests the managers send each other, and one box to message every manager.
+- A managers room appears in the sidebar once two rooms are active. It shows the requests the managers send each other, and one box to message every manager. Each request shows who asked whom and when.
+- A manager that receives a request from another manager now answers that manager, instead of asking you questions.
 
 ### Changed
 

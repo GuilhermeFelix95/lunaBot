@@ -31,6 +31,11 @@ export const roomsPtBR = {
   "rooms.managers.composerLabel": "Falar com todos os gerentes",
   "rooms.managers.composerPlaceholder": "Mensagem para todos os gerentes…",
   "rooms.managers.send": "Enviar",
+  "rooms.managers.subtitle": "Os gerentes combinam o trabalho entre as salas. Você acompanha cada pedido aqui.",
+  "rooms.managers.empty":
+    "Ainda não há pedidos entre gerentes. Quando uma sala precisar de ajuda de outra, aparece aqui.",
+  "rooms.managers.to": "para {names}",
+  "rooms.managers.hint": "Cada gerente responde na conversa da própria sala.",
   "rooms.sidebar.dismissed": "Dispensados",
   "rooms.sidebar.archived": "Salas arquivadas",
   "rooms.sidebar.empty": "Nenhuma sala ainda.",
