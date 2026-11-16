@@ -2948,7 +2948,6 @@ describe("Luna Bot connected desktop shell", () => {
 
     expect(await screen.findByRole("region", { name: "Browser takeover" })).toHaveTextContent("Action required");
     expect(screen.getByRole("heading", { name: "Finish this step on example.com" })).toBeVisible();
-    expect(await screen.findByRole("img", { name: "Preview of Sign in" })).toBeVisible();
     expect(await screen.findByRole("complementary", { name: "Browser" })).toBeVisible();
     await waitFor(() => expect(window.lunabot.browser.activate).toHaveBeenCalledWith("tab-login"));
     expect(window.lunabot.browser.capturePreview).toHaveBeenCalledTimes(1);
@@ -2965,7 +2964,6 @@ describe("Luna Bot connected desktop shell", () => {
     await waitFor(() => expect(screen.queryByRole("region", { name: "Browser takeover" })).not.toBeInTheDocument());
     const completedCard = await screen.findByRole("region", { name: "Browser takeover complete" });
     expect(completedCard).toHaveTextContent("Done");
-    expect(within(completedCard).getByRole("img", { name: "Preview of Sign in" })).toBeVisible();
     expect(within(completedCard).queryByRole("button")).not.toBeInTheDocument();
     expect(screen.getByRole("textbox", { name: "Message Chief" })).toBeVisible();
   });

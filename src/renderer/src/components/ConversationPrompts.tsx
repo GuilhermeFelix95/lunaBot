@@ -2,7 +2,7 @@ import { INPUT_LIMITS } from "@lunabot/contracts/input-limits";
 import type { AgentApproval, BrowserPreview, BrowserTab } from "@lunabot/contracts/ipc";
 import { createMemo, createSignal, For, Show } from "solid-js";
 import { t } from "../i18n";
-import { Badge, Button, Check, Input, Monitor, RadioGroup, Skeleton, TriangleAlert, X } from "./ui";
+import { Button, Input, RadioGroup } from "./ui";
 
 export function ChoiceCard(props: {
   title: string;
@@ -189,26 +189,12 @@ export function BrowserTakeoverCard(props: {
       aria-label={accessibleLabel()}
       aria-busy={submitting() ? "true" : undefined}
     >
-      <header class="browser-takeover-header">
-        <span>{t("conversation.takeover.browser")}</span>
-        <Show
-          when={!props.decision}
-          fallback={
-            <Badge variant={completed() ? "success-light" : "secondary"} role="status">
-              <Show when={completed()} fallback={<X data-icon="inline-start" aria-hidden="true" />}>
-                <Check data-icon="inline-start" aria-hidden="true" />
-              </Show>
-              {completed() ? t("conversation.takeover.done") : t("conversation.takeover.cancelled")}
-            </Badge>
-          }
-        >
-          <Badge variant="warning-light" role="status">
-            <TriangleAlert data-icon="inline-start" aria-hidden="true" />
-            {t("conversation.takeover.actionRequired")}
-          </Badge>
-        </Show>
-      </header>
-      <div class="browser-takeover-copy">
+      <span class="browser-takeover-moon" aria-hidden="true">
+        <svg viewBox="0 0 24 24" fill="#f3e7c3" aria-hidden="true">
+          <path d="M20.5 14.2A8.5 8.5 0 0 1 9.8 3.5a8.5 8.5 0 1 0 10.7 10.7Z" />
+        </svg>
+      </span>
+      <div class="browser-takeover-copy" role="status">
         <h2>
           {completed()
             ? t("conversation.takeover.stepCompleted", { host: pageDetails().host })
@@ -216,51 +202,14 @@ export function BrowserTakeoverCard(props: {
               ? t("conversation.takeover.stepCancelled", { host: pageDetails().host })
               : t("conversation.takeover.completeStep", { host: pageDetails().host })}
         </h2>
-        <p>
+        <span title={pageDetails().title}>
           {completed()
-            ? t("conversation.takeover.botContinuing", { name: props.botName })
+            ? `${t("conversation.takeover.done")} · ${t("conversation.takeover.botContinuing", { name: props.botName })}`
             : cancelled()
-              ? t("conversation.takeover.cancelledCopy")
-              : t("conversation.takeover.finishStep", { name: props.botName })}
-        </p>
+              ? t("conversation.takeover.cancelled")
+              : t("conversation.takeover.actionRequired")}
+        </span>
       </div>
-
-      <figure class="browser-takeover-preview">
-        <figcaption class="browser-takeover-preview-bar">
-          <Monitor aria-hidden="true" />
-          <span title={pageDetails().title}>{pageDetails().title}</span>
-          <small title={pageDetails().host}>{pageDetails().host}</small>
-        </figcaption>
-        <div class="browser-takeover-preview-viewport">
-          <Show
-            when={props.previewStatus === "ready" ? props.preview : null}
-            fallback={
-              <Show
-                when={props.previewStatus === "loading" || props.previewStatus === "idle"}
-                fallback={
-                  <div class="browser-takeover-preview-fallback">
-                    <Monitor aria-hidden="true" />
-                    <strong>{pageDetails().title}</strong>
-                    <span>{pageDetails().host}</span>
-                  </div>
-                }
-              >
-                <Skeleton class="browser-takeover-preview-skeleton" />
-              </Show>
-            }
-          >
-            {(preview) => (
-              <img
-                src={preview().dataUrl}
-                width={preview().width}
-                height={preview().height}
-                alt={t("conversation.takeover.previewAlt", { title: pageDetails().title })}
-              />
-            )}
-          </Show>
-        </div>
-      </figure>
-
       <Show when={!props.decision}>
         <footer class="browser-takeover-actions">
           <Button
