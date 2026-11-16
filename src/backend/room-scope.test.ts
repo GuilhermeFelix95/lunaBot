@@ -4,6 +4,7 @@ import {
   type BotScope,
   botScope,
   browserPartitionForScope,
+  canMessageBot,
   canReachBot,
   GENERAL_BROWSER_PARTITION,
   type RoomMembership,
@@ -24,6 +25,9 @@ const memberships = new Map<string, RoomMembership>([
   ["member-a", exclusive],
   ["dismissed-a", { ...exclusive, memberActive: false }],
   ["member-b", { ...exclusive, roomId: "room-b" }],
+  ["manager-b", { ...exclusive, roomId: "room-b", role: "manager" }],
+  ["manager-archived", { ...exclusive, roomId: "room-c", role: "manager", roomActive: false }],
+  ["manager-dismissed", { ...exclusive, roomId: "room-d", role: "manager", memberActive: false }],
   ["member-archived", { ...exclusive, roomActive: false }],
 ]);
 
@@ -44,6 +48,25 @@ describe("room scope", () => {
     expect(canReachBot(scope, "dismissed-a", memberships)).toBe(false);
     expect(canReachBot(scope, "member-b", memberships)).toBe(false);
     expect(canReachBot(scope, "general-bot", memberships)).toBe(false);
+  });
+
+  it("lets a manager message the active manager of another room and nobody else outside its room", () => {
+    const manager = botScope("manager-a", memberships);
+    expect(canMessageBot(manager, "manager-b", memberships)).toBe(true);
+    expect(canMessageBot(manager, "member-a", memberships)).toBe(true);
+    expect(canMessageBot(manager, "member-b", memberships)).toBe(false);
+    expect(canMessageBot(manager, "general-bot", memberships)).toBe(false);
+    expect(canMessageBot(manager, "manager-archived", memberships)).toBe(false);
+    expect(canMessageBot(manager, "manager-dismissed", memberships)).toBe(false);
+    // The wider rule is for messages only: reading or changing another room's manager stays out of reach.
+    expect(canReachBot(manager, "manager-b", memberships)).toBe(false);
+  });
+
+  it("keeps members, general bots and inactive managers from messaging another room", () => {
+    expect(canMessageBot(botScope("member-a", memberships), "manager-b", memberships)).toBe(false);
+    expect(canMessageBot(botScope("general-bot", memberships), "manager-b", memberships)).toBe(false);
+    expect(canMessageBot(botScope("manager-dismissed", memberships), "manager-b", memberships)).toBe(false);
+    expect(canMessageBot(botScope("manager-archived", memberships), "manager-b", memberships)).toBe(false);
   });
 
   it("gives dismissed members and archived rooms no reach at all", () => {

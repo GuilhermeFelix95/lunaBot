@@ -40,6 +40,19 @@ export function canReachBot(
   return target.roomId === scope.roomId && target.memberActive && target.roomActive;
 }
 
+// Messages are wider than reach: an active manager can also message the active manager of another active room,
+// so rooms can ask each other for work. Reading, routines and memory still follow canReachBot.
+export function canMessageBot(
+  scope: BotScope,
+  targetBotId: string,
+  memberships: ReadonlyMap<string, RoomMembership>,
+): boolean {
+  if (canReachBot(scope, targetBotId, memberships)) return true;
+  if (scope.kind !== "room" || scope.role !== "manager" || !scope.active) return false;
+  const target = memberships.get(targetBotId);
+  return target?.role === "manager" && target.memberActive && target.roomActive;
+}
+
 export function sharedRootForScope(scope: BotScope, sharedRoot: string, roomsRoot: string): string {
   return scope.kind === "general" ? sharedRoot : roomSharedRoot(roomsRoot, scope.roomId);
 }

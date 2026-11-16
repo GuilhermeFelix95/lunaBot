@@ -879,6 +879,12 @@ export class ClaudeAgentClient extends EventEmitter<ClientEvents> {
           (args) => call("room_catalog", args),
         ),
         tool(
+          "list_rooms",
+          "List the other active rooms with their manager and members. Message a manager with send_message to ask that room for work.",
+          {},
+          (args) => call("list_rooms", args),
+        ),
+        tool(
           "request_hire",
           "Ask the user to hire a general agent into your room. Nothing changes until the user approves.",
           {
