@@ -8,6 +8,10 @@ All notable changes to Luna Bot are recorded here.
 
 - Bots in a room's sidebar no longer carry a "copy" label.
 
+### Fixed
+
+- Turns that had already finished no longer go back to "running" in the stored history, and turns left running by a restart are closed when the app opens.
+
 ## [0.2.3] - 2026-11-15
 
 ### Changed

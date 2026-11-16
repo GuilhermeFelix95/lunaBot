@@ -592,6 +592,47 @@ describe("LunaBotDatabase", () => {
     database.close();
   });
 
+  it("does not reopen a finished turn when a late snapshot still names it as active", async () => {
+    const database = await createDatabase();
+    const bot = testBot();
+    database.replaceAgents("agents-import", [bot], "agents.imported");
+    if (!bot.threadId) throw new Error("The test bot has no thread.");
+    const running = conversationSnapshot(bot, "Working");
+    running.activeTurnId = "turn-1";
+    database.persistConversation(running, "response.delta-flushed");
+    const completed = structuredClone(running);
+    completed.activeTurnId = null;
+    database.persistConversation(completed, "turn.completed", { turnId: "turn-1", status: "completed" });
+
+    database.persistConversation(running, "response.delta-flushed");
+
+    expect(database.connection.prepare("SELECT status FROM projection_turns WHERE turn_id = 'turn-1'").get()).toEqual({
+      status: "completed",
+    });
+    database.close();
+  });
+
+  it("closes every turn still marked running as interrupted", async () => {
+    const database = await createDatabase();
+    const bot = testBot();
+    database.replaceAgents("agents-import", [bot], "agents.imported");
+    if (!bot.threadId) throw new Error("The test bot has no thread.");
+    const running = conversationSnapshot(bot, "Working");
+    running.activeTurnId = "turn-1";
+    database.persistConversation(running, "response.delta-flushed");
+    const idle = structuredClone(running);
+    idle.activeTurnId = null;
+    database.persistConversation(idle, "turn.something-else");
+
+    expect(database.closeRunningTurns()).toBe(1);
+
+    expect(
+      database.connection.prepare("SELECT status, completed_at FROM projection_turns WHERE turn_id = 'turn-1'").get(),
+    ).toMatchObject({ status: "interrupted", completed_at: expect.any(String) });
+    expect(database.closeRunningTurns()).toBe(0);
+    database.close();
+  });
+
   it("keeps only the latest full mailbox state", async () => {
     const database = await createDatabase();
     const state = {
