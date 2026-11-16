@@ -4,6 +4,10 @@ All notable changes to Luna Bot are recorded here.
 
 ## [Unreleased]
 
+### Fixed
+
+- The line under your message that says the agent is working keeps the same text and animation until the reply ends, instead of changing when the reply moves from the queue to its turn.
+
 ## [0.2.3] - 2026-11-15
 
 ### Changed
