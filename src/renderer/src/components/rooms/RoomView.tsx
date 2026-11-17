@@ -163,7 +163,8 @@ function RoomContent(props: RoomContentProps) {
             </Show>
           </Tabs.Trigger>
         </Tabs.List>
-        <Tabs.Content value="conversation" class="rooms-view-panel rooms-view-conversation">
+        {/* Stays mounted behind the backstage: mounting the conversation again reloads it and loses its scroll and panels. */}
+        <Tabs.Content value="conversation" class="rooms-view-panel rooms-view-conversation" forceMount>
           <Show when={pendingRoomRequests(props.room()).length > 0}>
             <section class="rooms-requests">
               <button

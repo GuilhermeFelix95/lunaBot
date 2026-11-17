@@ -9,7 +9,7 @@ describe("buildContentSecurityPolicy", () => {
     expect(policy).toContain("frame-src 'self' lunabot-attachment:;");
     expect(policy).toContain("img-src 'self' data: lunabot-attachment: lunabot-avatar: https:;");
     expect(policy).toBe(
-      "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: lunabot-attachment: lunabot-avatar: https:; font-src 'self' data:; connect-src 'self' lunabot-attachment:; object-src 'none'; frame-src 'self' lunabot-attachment:; base-uri 'none'",
+      "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: lunabot-attachment: lunabot-avatar: https:; font-src 'self' data:; media-src 'self' blob:; connect-src 'self' lunabot-attachment:; object-src 'none'; frame-src 'self' lunabot-attachment:; base-uri 'none'",
     );
     expect(policy).not.toContain("analytics");
     expect(policy).not.toContain("ws:");

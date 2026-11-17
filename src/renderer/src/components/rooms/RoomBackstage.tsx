@@ -340,6 +340,12 @@ export function RoomBackstage(props: RoomBackstageProps) {
                     ) : (
                       <article class="rooms-backstage-bubble" data-own={row.own ? "" : undefined}>
                         <header class="rooms-backstage-bubble-meta">
+                          <AgentAvatar
+                            seed={avatarOf(row.message.authorBotId).seed}
+                            hue={avatarOf(row.message.authorBotId).hue}
+                            url={avatarOf(row.message.authorBotId).url}
+                            class="rooms-backstage-bubble-avatar"
+                          />
                           <strong>{row.message.authorName}</strong>
                           <time datetime={row.message.createdAt}>{timeLabel(row.message.createdAt)}</time>
                         </header>

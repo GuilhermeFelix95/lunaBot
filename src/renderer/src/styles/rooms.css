@@ -600,6 +600,10 @@
   overflow: hidden;
 }
 
+.rooms-view-conversation:not([data-selected]) {
+  display: none;
+}
+
 /* The conversation owns its scroller, which follows the newest message. Request cards stay above it. */
 .rooms-view-conversation > :not(.rooms-requests) {
   flex: 1 1 auto;
@@ -712,12 +716,14 @@
 }
 
 .rooms-backstage-error {
+  grid-row: 1;
   grid-column: 1 / -1;
   padding: var(--lunabot-space-2) var(--lunabot-space-3);
 }
 
 .rooms-backstage-list-pane,
 .rooms-backstage-detail {
+  grid-row: 2;
   display: flex;
   flex-direction: column;
   min-width: 0;
@@ -725,14 +731,16 @@
 }
 
 .rooms-backstage-list-pane {
-  border-right: 1px solid var(--lunabot-line);
+  border: 1px solid var(--lunabot-line);
+  border-radius: var(--lunabot-radius-lg) 0 0 var(--lunabot-radius-lg);
+  background: var(--lunabot-surface-sunken);
 }
 
 .rooms-backstage-list-head {
   display: flex;
   align-items: center;
   gap: var(--lunabot-space-1-5);
-  padding: var(--lunabot-space-2) var(--lunabot-space-3);
+  padding: var(--lunabot-space-3);
   border-bottom: 1px solid var(--lunabot-line);
   color: var(--lunabot-ink-2);
   font-size: var(--lunabot-text-xs);
@@ -751,12 +759,13 @@
 .rooms-backstage-item {
   display: flex;
   align-items: flex-start;
-  gap: var(--lunabot-space-2);
+  gap: var(--lunabot-space-3);
   width: 100%;
   min-width: 0;
   margin: 0;
-  padding: var(--lunabot-space-2);
+  padding: var(--lunabot-space-2) var(--lunabot-space-3);
   border: 0;
+  border-left: 3px solid transparent;
   border-radius: var(--lunabot-radius-md);
   background: none;
   color: inherit;
@@ -770,6 +779,7 @@
 }
 
 .rooms-backstage-item[aria-selected="true"] {
+  border-left-color: var(--lunabot-accent);
   background: var(--lunabot-accent-soft);
 }
 
@@ -780,8 +790,8 @@
 
 .rooms-backstage-avatar {
   flex-shrink: 0;
-  width: var(--lunabot-icon-md);
-  height: var(--lunabot-icon-md);
+  width: 36px;
+  height: 36px;
 }
 
 .rooms-backstage-item-main {
@@ -803,7 +813,8 @@
 .rooms-backstage-name {
   min-width: 0;
   overflow: hidden;
-  font-weight: var(--lunabot-weight-medium);
+  font-size: var(--lunabot-text-md);
+  font-weight: var(--lunabot-weight-semibold);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -838,6 +849,23 @@
   gap: var(--lunabot-space-1);
 }
 
+/* A coloured dot says the state at a glance; the label beside it says it in words. */
+.rooms-backstage-state::before {
+  content: "";
+  width: 6px;
+  height: 6px;
+  border-radius: var(--lunabot-radius-pill);
+  background: currentColor;
+}
+
+.rooms-backstage-item[data-state="idle"] .rooms-backstage-state::before {
+  display: none;
+}
+
+.rooms-backstage-item[data-state="done"] .rooms-backstage-state::before {
+  background: var(--lunabot-success);
+}
+
 .rooms-backstage-item[data-state="working"] .rooms-backstage-state {
   color: var(--lunabot-accent-text);
 }
@@ -855,15 +883,20 @@
 }
 
 .rooms-backstage-empty {
-  margin: 0;
-  padding: var(--lunabot-space-2) var(--lunabot-space-1);
+  margin: auto;
+  max-width: 36ch;
+  padding: var(--lunabot-space-4);
   color: var(--lunabot-ink-2);
-  font-size: var(--lunabot-text-sm);
+  font-size: var(--lunabot-text-md);
+  text-align: center;
 }
 
 .rooms-backstage-detail {
   gap: var(--lunabot-space-3);
   padding: var(--lunabot-space-3) var(--lunabot-space-4);
+  border: 1px solid var(--lunabot-line);
+  border-left: 0;
+  border-radius: 0 var(--lunabot-radius-lg) var(--lunabot-radius-lg) 0;
 }
 
 .rooms-backstage-detail-head {
@@ -909,7 +942,7 @@
   display: flex;
   flex: 1 1 auto;
   flex-direction: column;
-  gap: var(--lunabot-space-3);
+  gap: var(--lunabot-space-4);
   min-height: 0;
   padding-right: var(--lunabot-space-1);
   overflow-y: auto;
@@ -935,12 +968,13 @@
   --backstage-bubble-bg: var(--lunabot-surface-sunken);
   display: flex;
   flex-direction: column;
-  gap: var(--lunabot-space-1);
+  gap: var(--lunabot-space-2);
   align-self: flex-start;
   min-width: 0;
-  max-width: min(100%, 680px);
-  padding: var(--lunabot-space-2) var(--lunabot-space-3);
-  border-radius: var(--lunabot-radius-bubble);
+  max-width: min(86%, 680px);
+  padding: var(--lunabot-space-3) var(--lunabot-space-4);
+  border: 1px solid var(--lunabot-line);
+  border-radius: var(--lunabot-radius-lg);
   background: var(--backstage-bubble-bg);
 }
 
@@ -951,21 +985,32 @@
 
 .rooms-backstage-bubble-meta {
   display: flex;
-  align-items: baseline;
+  align-items: center;
   gap: var(--lunabot-space-2);
   color: var(--lunabot-ink-3);
   font-size: var(--lunabot-text-xs);
 }
 
 .rooms-backstage-bubble-meta strong {
-  color: var(--lunabot-ink-2);
-  font-weight: var(--lunabot-weight-medium);
+  color: var(--lunabot-ink);
+  font-size: var(--lunabot-text-sm);
+  font-weight: var(--lunabot-weight-semibold);
+}
+
+.rooms-backstage-bubble-meta time {
+  margin-left: auto;
+}
+
+.rooms-backstage-bubble-avatar {
+  flex-shrink: 0;
+  width: 22px;
+  height: 22px;
 }
 
 .rooms-backstage-body {
   min-width: 0;
   overflow-wrap: anywhere;
-  font-size: var(--lunabot-text-lg);
+  font-size: var(--lunabot-text-md);
   line-height: 1.55;
 }
 

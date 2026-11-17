@@ -9,6 +9,7 @@ export function buildContentSecurityPolicy(packaged: boolean): string {
     "style-src 'self' 'unsafe-inline'",
     `img-src 'self' data: lunabot-attachment: lunabot-avatar: https:${developmentImageSources}`,
     "font-src 'self' data:",
+    "media-src 'self' blob:",
     `connect-src 'self' lunabot-attachment:${developmentSources}`,
     "object-src 'none'",
     `frame-src 'self' lunabot-attachment:${developmentFrameSources}`,

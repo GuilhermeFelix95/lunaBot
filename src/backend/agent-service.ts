@@ -1107,7 +1107,11 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     const workspaceRoot = await realpath(bot.workspacePath);
     const candidatePath = workspacePathFromInput(bot.workspacePath, bot.id, inputPath);
     const resolvedPath = await realpath(candidatePath);
-    if (!isWithin(workspaceRoot, resolvedPath)) {
+    // A room member also works in its room's shared folder, so files it mentions there open too.
+    const roomRoot =
+      this.#scopeOf(botId).kind === "general" ? null : await realpath(this.#sharedRootFor(botId)).catch(() => null);
+    const inRoom = roomRoot !== null && (resolvedPath === roomRoot || isWithin(roomRoot, resolvedPath));
+    if (!isWithin(workspaceRoot, resolvedPath) && !inRoom) {
       throw new Error(nativeMessage("errors.file.workspaceOutside"));
     }
     const metadata = await stat(resolvedPath);

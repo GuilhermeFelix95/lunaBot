@@ -68,7 +68,10 @@ export default function FilePreviewPanel(props: FilePreviewPanelProps) {
     (preview) => {
       if (currentPreviewUrl) URL.revokeObjectURL(currentPreviewUrl);
       currentPreviewUrl = null;
-      if (!preview.bytes || (preview.previewKind !== "image" && preview.previewKind !== "pdf")) {
+      if (
+        !preview.bytes ||
+        (preview.previewKind !== "image" && preview.previewKind !== "pdf" && preview.previewKind !== "video")
+      ) {
         setPreviewUrl(null);
         return;
       }
@@ -177,6 +180,12 @@ export default function FilePreviewPanel(props: FilePreviewPanelProps) {
         </Show>
         <Show when={props.preview.previewKind === "pdf" && previewUrl()}>
           <iframe class="file-preview-pdf" title={props.preview.name} src={previewUrl() ?? ""} />
+        </Show>
+        <Show when={props.preview.previewKind === "video" && previewUrl()}>
+          <div class="file-preview-image-wrap">
+            {/* biome-ignore lint/a11y/useMediaCaption: a local file the user opened has no caption track to offer. */}
+            <video class="file-preview-video" src={previewUrl() ?? ""} controls />
+          </div>
         </Show>
         <Show when={props.preview.previewKind === "directory"}>
           <Show

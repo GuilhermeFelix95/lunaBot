@@ -25,6 +25,10 @@ describe("file previews", () => {
       previewKind: "image",
     });
     expect(filePreviewFromBytes("report.pdf", new Uint8Array([1]))).toMatchObject({ previewKind: "pdf" });
+    expect(filePreviewFromBytes("reels-v4.mp4", new Uint8Array([1]))).toMatchObject({
+      mimeType: "video/mp4",
+      previewKind: "video",
+    });
     expect(mimeTypeForName("Dockerfile")).toBe("text/plain");
   });
 

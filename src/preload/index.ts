@@ -205,6 +205,7 @@ function decodeFilePreview(value: unknown): FilePreview {
       preview.previewKind !== "text" &&
       preview.previewKind !== "image" &&
       preview.previewKind !== "pdf" &&
+      preview.previewKind !== "video" &&
       preview.previewKind !== "directory" &&
       preview.previewKind !== "none") ||
     (preview.bytes !== null && !(preview.bytes instanceof Uint8Array))
