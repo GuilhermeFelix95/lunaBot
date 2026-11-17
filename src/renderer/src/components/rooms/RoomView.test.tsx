@@ -123,6 +123,33 @@ describe("RoomView", () => {
     await waitFor(() => expect(resolveRequest).toHaveBeenCalledWith({ requestId: "req-hire", decision: "approve" }));
   });
 
+  it("keeps the conversation mounted while the backstage is open", async () => {
+    const mounted = vi.fn();
+    const store = await loadedStore(createApi({}));
+    render(() => (
+      <RoomView
+        store={store}
+        roomId="room-1"
+        nameOfBot={() => undefined}
+        creatingRequestId={null}
+        onCreateBotForRequest={() => {}}
+        renderConversation={() => {
+          mounted();
+          return <p>Conversation with the manager</p>;
+        }}
+      />
+    ));
+
+    store.setTab("backstage");
+    flush();
+    await waitFor(() => expect(document.querySelector(".rooms-backstage")).not.toBeNull());
+    store.setTab("conversation");
+    flush();
+
+    expect(await screen.findByText("Conversation with the manager")).toBeInTheDocument();
+    expect(mounted).toHaveBeenCalledTimes(1);
+  });
+
   it("opens the conversation of the member chosen in the sidebar", async () => {
     const messages: RoomBackstageMessage[] = [
       {

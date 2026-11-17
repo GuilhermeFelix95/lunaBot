@@ -875,7 +875,7 @@ function isFileMention(value: string): boolean {
   if (!value || /[\0\r\n]/u.test(value) || /[/\\]$/u.test(value)) return false;
   const name = workspaceFileName(value);
   if (/^(Dockerfile|Makefile|\.gitignore)$/iu.test(name)) return true;
-  return /\.(?:avif|bash|c|conf|cpp|cs|css|csv|env|fish|gif|go|h|hpp|html?|ini|java|jpe?g|jsx?|json|kt|kts|log|markdown|md|pdf|php|png|ps1|py|rb|rs|scala|sh|sql|swift|toml|tsx?|txt|webp|xml|ya?ml|zsh)$/iu.test(
+  return /\.(?:avif|bash|c|conf|cpp|cs|css|csv|env|fish|gif|go|h|hpp|html?|ini|java|jpe?g|jsx?|json|kt|kts|log|m4v|markdown|md|mov|mp4|pdf|php|png|ps1|py|rb|rs|scala|sh|sql|swift|toml|tsx?|txt|webm|webp|xml|ya?ml|zsh)$/iu.test(
     name,
   );
 }

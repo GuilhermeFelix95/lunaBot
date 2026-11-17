@@ -559,7 +559,7 @@ export interface OpenWorkspaceFileInput {
   path: string;
 }
 
-export type FilePreviewKind = "markdown" | "text" | "image" | "pdf" | "directory" | "none";
+export type FilePreviewKind = "markdown" | "text" | "image" | "pdf" | "video" | "directory" | "none";
 
 export interface DirectoryEntry {
   name: string;
