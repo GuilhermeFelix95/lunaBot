@@ -4,6 +4,21 @@ All notable changes to Luna Bot are recorded here.
 
 ## [Unreleased]
 
+## [0.2.9] - 2026-11-16
+
+### Added
+
+- Video files (.mp4, .m4v, .mov, .webm) mentioned in the conversation open in the file panel on the right, with a player.
+- Room bots open files from the room's own shared folder.
+
+### Changed
+
+- The room's backstage has a new look: full-height panels, a list with avatar and status, and messages in cards.
+
+### Fixed
+
+- The room conversation no longer reloads when you return from the Backstage.
+
 ## [0.2.8] - 2026-11-16
 
 ### Added
